@@ -1,0 +1,146 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  shutdown: graceful          # attend la fin des requêtes en cours avant d'arrêter
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/plain,text/csv
+    min-response-size: 1024
+  tomcat:
+    threads:
+      max: 400
+      min-spare: 20
+    accept-count: 200
+    max-connections: 8192
+
+spring:
+  application:
+    name: tontine-backend
+
+  # Profil par défaut si SPRING_PROFILES_ACTIVE n'est pas défini
+  profiles:
+    default: dev
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s  # délai max pour finir les requêtes en cours
+
+  # ── Cache (Caffeine in-memory) ─────────────────────────────────────────────
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=300s
+
+# ── JWT ────────────────────────────────────────────────────────────────────────
+jwt:
+  expiration: 86400000         # 1 jour
+  refresh-expiration: 604800000 # 7 jours
+  # secret : défini dans chaque profil
+
+# ── OTP & PIN ──────────────────────────────────────────────────────────────────
+otp:
+  expiration-minutes: 5
+
+pin:
+  max-tentatives: 5
+  blocage-minutes: 15
+
+# ── Firebase ───────────────────────────────────────────────────────────────────
+firebase:
+  credentials-json: ${FIREBASE_CREDENTIALS_JSON:}
+  credentials-path: ${FIREBASE_CREDENTIALS:classpath:firebase-service-account.json}
+
+# ── Monetbil ───────────────────────────────────────────────────────────────────
+monetbil:
+  service-key:    ${MONETBIL_SERVICE_KEY:}
+  service-secret: ${MONETBIL_SERVICE_SECRET:}
+  api-url:        https://api.monetbil.com/payment/v1/placePayment
+  transfer-url:   https://api.monetbil.com/transfer/v1/process
+  notify-url:     ${MONETBIL_NOTIFY_URL:}
+  return-url:     ${MONETBIL_RETURN_URL:}
+
+# ── Compte développeur (destinataire des amendes) ──────────────────────────────
+developpeur:
+  compte:
+    mtn-momo:     ${DEVELOPPEUR_MTN_MOMO:681951580}
+    orange-money: ${DEVELOPPEUR_ORANGE_MONEY:692966294}
+
+# ── Mobile Money ───────────────────────────────────────────────────────────────
+mobile-money:
+  mtn:
+    base-url:         ${MTN_BASE_URL:https://sandbox.momodeveloper.mtn.com}
+    subscription-key: ${MTN_SUBSCRIPTION_KEY:}
+    api-user:         ${MTN_API_USER:}
+    api-key:          ${MTN_API_KEY:}
+    environment:      ${MTN_ENV:sandbox}
+    currency:         XAF
+    callback-url:     ${MTN_CALLBACK_URL:}
+  orange:
+    base-url:      ${ORANGE_BASE_URL:https://api.orange.com/orange-money-webpay/cm/v1}
+    client-id:     ${ORANGE_CLIENT_ID:}
+    client-secret: ${ORANGE_CLIENT_SECRET:}
+    merchant-key:  ${ORANGE_MERCHANT_KEY:}
+    currency:      XAF
+    return-url:    ${ORANGE_RETURN_URL:}
+    cancel-url:    ${ORANGE_CANCEL_URL:}
+    notif-url:     ${ORANGE_NOTIF_URL:}
+
+# ── SMS ────────────────────────────────────────────────────────────────────────
+sms:
+  provider: ${SMS_PROVIDER:console}
+
+africastalking:
+  api-key:   ${AT_API_KEY:}
+  username:  ${AT_USERNAME:sandbox}
+  sender-id: ${AT_SENDER_ID:AdasheCash}
+
+twilio:
+  account-sid: ${TWILIO_ACCOUNT_SID:}
+  auth-token:  ${TWILIO_AUTH_TOKEN:}
+  api-key:     ${TWILIO_API_KEY:}
+  api-secret:  ${TWILIO_API_SECRET:}
+  from-number: ${TWILIO_FROM_NUMBER:}
+
+# ── Resilience4j ───────────────────────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      monetbil:
+        sliding-window-size: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+        register-health-indicator: true
+  retry:
+    instances:
+      monetbil:
+        max-attempts: 2
+        wait-duration: 1s
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - java.net.SocketTimeoutException
+
+# ── Logging — pattern commun aux deux profils ──────────────────────────────────
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{correlationId:-no-id}] %logger{36} - %msg%n"
+    file:    "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{correlationId:-no-id}] %logger{36} - %msg%n"
+
+# ── Actuator ───────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: AdasheCash API
+    version: 1.0.0
+    description: Gestion de tontines — Cameroun

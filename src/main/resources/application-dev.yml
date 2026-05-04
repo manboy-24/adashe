@@ -1,0 +1,79 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Profil DEV — activer avec : SPRING_PROFILES_ACTIVE=dev  (défaut si omis)
+# Base de données locale, logs verbeux, SMS en console, Swagger activé.
+# ══════════════════════════════════════════════════════════════════════════════
+
+spring:
+  # ── MySQL local ────────────────────────────────────────────────────────────
+  datasource:
+    url: jdbc:mysql://localhost:3306/tontine_db?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    username: root
+    password: "manboy"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 10000
+
+  # ── Flyway ────────────────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true   # DB existante → marque V1 comme appliqué sans le rejouer
+    baseline-version: 1
+    validate-on-migrate: true
+
+  # ── JPA ───────────────────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: update          # Crée les tables manquantes sans toucher les existantes
+    show-sql: true              # SQL visible dans les logs pour déboguer
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  # ── Mail : Mailtrap (intercepte sans envoyer vraiment) ─────────────────────
+  mail:
+    host: sandbox.smtp.mailtrap.io
+    port: 2525
+    username: ${MAILTRAP_USERNAME:}
+    password: ${MAILTRAP_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+
+# ── JWT — secret de dev (non sécurisé, ne jamais utiliser en prod) ─────────────
+jwt:
+  secret: Ru9CNN81/7jvrNUvbxo1m53eX/4cmGyQH+Ww+LrjOVCfqthNMIrqxZjcjD7F5qpC6CUBL7DjxcX87ROfXmOhoA==
+
+# ── SMS : console (pas de vrai SMS, le code s'affiche dans les logs) ───────────
+sms:
+  provider: console
+
+# ── Logs verbeux en dev ────────────────────────────────────────────────────────
+logging:
+  level:
+    com.tontine: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql: TRACE   # Affiche les valeurs des paramètres SQL
+
+# ── Actuator : détails visibles sans auth en dev ──────────────────────────────
+management:
+  endpoint:
+    health:
+      show-details: always
+  health:
+    mail:
+      enabled: false
+
+# ── Swagger toujours accessible en dev ────────────────────────────────────────
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tags-sorter: alpha
+  show-actuator: true

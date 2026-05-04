@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn test-compile *)",
+      "Bash(mvn test *)",
+      "Bash(mvn -pl . test -Dtest=AuthControllerTest#inscrire_requete_valide_retourne_201)",
+      "Bash(./mvnw compile *)",
+      "Bash(mvn compile *)"
+    ]
+  }
+}

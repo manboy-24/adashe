@@ -31,7 +31,6 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-@Transactional
 public class PaiementServiceImpl implements PaiementService {
 
     private final PaiementRepository paiementRepository;
@@ -62,6 +61,7 @@ public class PaiementServiceImpl implements PaiementService {
     // ── Initier un paiement Mobile Money ─────────────────────────────────────
 
     @Override
+    @Transactional
     public PaiementResponse initierPaiement(PaiementMobileMoneyRequest request, Long userId) {
         // Vérifications
         MembreTontine membre = membreRepository.findById(request.getMembreId())
@@ -84,9 +84,28 @@ public class PaiementServiceImpl implements PaiementService {
         // Générer la référence unique
         String reference = "TONTINE-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
 
-        // Déterminer l'amende si c'est un rattrapage de cycle
+        // Rejeter si cotisation déjà payée pour ce cycle (anti-doublon)
+        int targetCycle = (request.getNumeroCycle() != null && request.getNumeroCycle() >= 1)
+                ? request.getNumeroCycle() : tontine.getCycleActuel();
+        boolean dejaPaye = cotisationRepository
+                .findByMembreIdAndTontineIdAndNumeroCycle(membre.getId(), tontine.getId(), targetCycle)
+                .filter(c -> c.getStatut() == PaiementStatus.PAYE)
+                .isPresent();
+        if (dejaPaye) {
+            throw new BadRequestException("La cotisation pour ce cycle est déjà enregistrée");
+        }
+
+        // Rejeter si un paiement EN_ATTENTE existe déjà pour ce membre (anti-concurrent)
+        if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
+            throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");
+        }
+
+        // Valider le montant contre la cotisation attendue en base
         BigDecimal montantAmende = BigDecimal.ZERO;
-        if (request.getNumeroCycle() != null && request.getNumeroCycle() < tontine.getCycleActuel()) {
+        if (request.getNumeroCycle() != null
+                && request.getNumeroCycle() >= 1
+                && request.getNumeroCycle() < tontine.getCycleActuel()) {
+            // Rattrapage de cycle : cotisation + amende obligatoire
             montantAmende = tontine.getMontantAmende();
             BigDecimal montantAttendu = tontine.getMontantContribution().add(montantAmende);
             if (request.getMontant().compareTo(montantAttendu) < 0) {
@@ -94,6 +113,14 @@ public class PaiementServiceImpl implements PaiementService {
                         "Montant insuffisant pour le rattrapage : " + montantAttendu
                         + " XAF requis (cotisation " + tontine.getMontantContribution()
                         + " + amende " + montantAmende + ")");
+            }
+        } else {
+            // Cycle courant : le montant doit couvrir au minimum la cotisation définie
+            BigDecimal montantAttendu = tontine.getMontantContribution();
+            if (request.getMontant().compareTo(montantAttendu) < 0) {
+                throw new BadRequestException(
+                        "Montant insuffisant : " + montantAttendu
+                        + " XAF requis pour la cotisation");
             }
         }
 
@@ -166,6 +193,7 @@ public class PaiementServiceImpl implements PaiementService {
     // ── Traiter le callback Monetbil ─────────────────────────────────────────
 
     @Override
+    @Transactional
     public ApiResponse<String> traiterCallbackMonetbil(Map<String, String> payload) {
         String reference  = payload.get("item_ref");
         String paymentRef = payload.get("payment_ref");
@@ -177,7 +205,7 @@ public class PaiementServiceImpl implements PaiementService {
         // ── Vérification de signature HMAC-SHA512 ─────────────────────────────
         if (!verifierSignatureMonetbil(payload, sign)) {
             log.warn("Signature Monetbil invalide pour ref={}", reference);
-            return ApiResponse.error("Signature invalide");
+            throw new ForbiddenException("Signature invalide");
         }
 
         // Verrou pessimiste : évite le double traitement en cas de callbacks simultanés
@@ -205,11 +233,11 @@ public class PaiementServiceImpl implements PaiementService {
 
             enregistrerCotisationApresPaiement(paiement);
 
-            // Virer l'amende vers le compte développeur si présente
+            // Virer l'amende en arrière-plan — évite de bloquer le webhook Monetbil
             if (paiement.getMontantAmende() != null
                     && paiement.getMontantAmende().compareTo(BigDecimal.ZERO) > 0) {
-                virementAmendeService.effectuerVirement(paiement, paiement.getMontantAmende());
-                log.info("Virement amende déclenché: {} XAF — ref={}", paiement.getMontantAmende(), reference);
+                virementAmendeService.effectuerVirementAsync(paiement.getId(), paiement.getMontantAmende());
+                log.info("Virement amende planifié (async): {} XAF — ref={}", paiement.getMontantAmende(), reference);
             }
 
             notificationService.creerNotification(
@@ -246,6 +274,7 @@ public class PaiementServiceImpl implements PaiementService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<PaiementResponse> getMesPaiements(Long userId) {
         return paiementRepository.findByUtilisateurIdOrderByCreatedAtDesc(userId)
                 .stream().map(this::toResponse).collect(Collectors.toList());

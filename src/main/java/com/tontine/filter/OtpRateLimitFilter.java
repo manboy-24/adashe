@@ -29,21 +29,25 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class OtpRateLimitFilter implements Filter {
 
-    private static final long WINDOW_OTP_MS  = 10 * 60 * 1000L;   // 10 min
-    private static final long WINDOW_PIN_MS  =  5 * 60 * 1000L;   //  5 min
-    private static final int  LIMIT_OTP      = 5;
-    private static final int  LIMIT_PIN      = 10;
+    private static final long WINDOW_OTP_MS      = 10 * 60 * 1000L;   // 10 min
+    private static final long WINDOW_PIN_MS      =  5 * 60 * 1000L;   //  5 min
+    private static final long WINDOW_PAIEMENT_MS =  1 * 60 * 1000L;   //  1 min
+    private static final int  LIMIT_OTP          = 5;
+    private static final int  LIMIT_PIN          = 10;
+    private static final int  LIMIT_PAIEMENT     = 5;
 
     // Endpoints à protéger (suffixe de l'URI)
     private static final Set<String> OTP_PATHS = Set.of(
             "/auth/inscription",
             "/auth/renvoyer-otp"
     );
-    private static final String PIN_PATH = "/auth/pin/connexion";
+    private static final String PIN_PATH      = "/auth/pin/connexion";
+    private static final String PAIEMENT_PATH = "/paiements/initier";
 
-    // IP → timestamps des requêtes (deux buckets séparés)
-    private final ConcurrentHashMap<String, Deque<Long>> otpBucket = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Deque<Long>> pinBucket = new ConcurrentHashMap<>();
+    // IP → timestamps des requêtes (buckets séparés par endpoint)
+    private final ConcurrentHashMap<String, Deque<Long>> otpBucket      = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Deque<Long>> pinBucket      = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Deque<Long>> paiementBucket = new ConcurrentHashMap<>();
 
     @Override
     public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
@@ -65,6 +69,12 @@ public class OtpRateLimitFilter implements Filter {
             if (!isAllowed(ip, pinBucket, LIMIT_PIN, WINDOW_PIN_MS)) {
                 log.warn("[RateLimit] IP {} bloquée sur {}", ip, uri);
                 sendTooManyRequests(response, "Trop de tentatives. Réessayez dans 5 minutes.");
+                return;
+            }
+        } else if (uri.endsWith(PAIEMENT_PATH)) {
+            if (!isAllowed(ip, paiementBucket, LIMIT_PAIEMENT, WINDOW_PAIEMENT_MS)) {
+                log.warn("[RateLimit] IP {} bloquée sur {}", ip, uri);
+                sendTooManyRequests(response, "Trop de tentatives de paiement. Réessayez dans 1 minute.");
                 return;
             }
         }
@@ -109,9 +119,11 @@ public class OtpRateLimitFilter implements Filter {
     @Scheduled(fixedRate = 3_600_000)
     public void purgerBuckets() {
         long threshold = System.currentTimeMillis();
-        purger(otpBucket, threshold, WINDOW_OTP_MS);
-        purger(pinBucket, threshold, WINDOW_PIN_MS);
-        log.debug("[RateLimit] Nettoyage buckets — OTP:{} PIN:{}", otpBucket.size(), pinBucket.size());
+        purger(otpBucket,      threshold, WINDOW_OTP_MS);
+        purger(pinBucket,      threshold, WINDOW_PIN_MS);
+        purger(paiementBucket, threshold, WINDOW_PAIEMENT_MS);
+        log.debug("[RateLimit] Nettoyage buckets — OTP:{} PIN:{} PAIEMENT:{}",
+                otpBucket.size(), pinBucket.size(), paiementBucket.size());
     }
 
     private void purger(ConcurrentHashMap<String, Deque<Long>> bucket, long now, long windowMs) {

@@ -43,6 +43,10 @@ public interface CotisationRepository extends JpaRepository<Cotisation, Long> {
     @Query("SELECT c.membre.id FROM Cotisation c WHERE c.tontine.id = :tontineId AND c.numeroCycle = :cycle AND c.statut = 'PAYE'")
     Set<Long> findMembreIdsAyantPayePourCycle(@Param("tontineId") Long tontineId, @Param("cycle") Integer cycle);
 
+    /** Batch : membres ayant payé pour le cycle ACTUEL de chaque tontine — 1 query au lieu de N. */
+    @Query("SELECT c.tontine.id, c.membre.id FROM Cotisation c WHERE c.tontine.id IN :tontineIds AND c.statut = 'PAYE' AND c.numeroCycle = c.tontine.cycleActuel")
+    List<Object[]> findMembreIdsAyantPayePourCyclesActuels(@Param("tontineIds") List<Long> tontineIds);
+
     @Query("SELECT COUNT(c) FROM Cotisation c WHERE c.membre.id = :membreId AND c.tontine.id = :tontineId AND c.statut = 'PAYE'")
     int countPayesByMembreIdAndTontineId(@Param("membreId") Long membreId, @Param("tontineId") Long tontineId);
 

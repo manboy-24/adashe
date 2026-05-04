@@ -12,6 +12,7 @@ import com.tontine.exception.ForbiddenException;
 import com.tontine.gateway.MonetbilGateway;
 import com.tontine.repository.*;
 import com.tontine.service.impl.PaiementServiceImpl;
+import com.tontine.service.impl.VirementAmendeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +43,7 @@ class PaiementServiceTest {
     @Mock private UtilisateurRepository   utilisateurRepository;
     @Mock private NotificationService     notificationService;
     @Mock private MonetbilGateway         monetbilGateway;
+    @Mock private VirementAmendeService   virementAmendeService;
 
     @InjectMocks
     private PaiementServiceImpl paiementService;
@@ -89,6 +91,9 @@ class PaiementServiceTest {
 
         when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(paiementRepository.existsByMembreIdAndStatut(anyLong(), any())).thenReturn(false);
         when(paiementRepository.save(any())).thenAnswer(inv -> { Paiement p = inv.getArgument(0); p.setId(50L); return p; });
         when(monetbilGateway.callApi(anyString(), any())).thenReturn(apiResp);
 
@@ -107,6 +112,9 @@ class PaiementServiceTest {
 
         when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(paiementRepository.existsByMembreIdAndStatut(anyLong(), any())).thenReturn(false);
         when(paiementRepository.save(any())).thenAnswer(inv -> { Paiement p = inv.getArgument(0); p.setId(50L); return p; });
         when(monetbilGateway.callApi(anyString(), any())).thenReturn(apiResp);
 
@@ -115,7 +123,6 @@ class PaiementServiceTest {
                 .hasMessageContaining("Numéro invalide");
 
         // 2 saves : création (EN_ATTENTE) + marquage ANNULE
-        // argThat capte la référence mutée : les deux calls matchent → on vérifie times(2)
         verify(paiementRepository, times(2)).save(any(Paiement.class));
     }
 
@@ -146,6 +153,9 @@ class PaiementServiceTest {
     void initierPaiement_exception_reseau_annule_paiement() throws Exception {
         when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(paiementRepository.existsByMembreIdAndStatut(anyLong(), any())).thenReturn(false);
         when(paiementRepository.save(any())).thenAnswer(inv -> { Paiement p = inv.getArgument(0); p.setId(50L); return p; });
         when(monetbilGateway.callApi(anyString(), any())).thenThrow(new RuntimeException("Connection refused"));
 
@@ -154,6 +164,50 @@ class PaiementServiceTest {
                 .hasMessageContaining("indisponible");
 
         verify(paiementRepository, times(2)).save(any(Paiement.class));
+    }
+
+    @Test
+    void initierPaiement_cotisation_deja_payee_leve_exception() {
+        Cotisation cotisationExistante = Cotisation.builder()
+                .id(99L).statut(PaiementStatus.PAYE).build();
+
+        when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.of(cotisationExistante));
+
+        assertThatThrownBy(() -> paiementService.initierPaiement(buildRequest(PaiementMode.MTN_MOBILE_MONEY), 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("déjà enregistrée");
+    }
+
+    @Test
+    void initierPaiement_paiement_concurrent_en_attente_leve_exception() {
+        when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(paiementRepository.existsByMembreIdAndStatut(100L, PaiementStatus.EN_ATTENTE)).thenReturn(true);
+
+        assertThatThrownBy(() -> paiementService.initierPaiement(buildRequest(PaiementMode.MTN_MOBILE_MONEY), 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("déjà en cours");
+    }
+
+    @Test
+    void initierPaiement_montant_insuffisant_leve_exception() {
+        when(membreRepository.findById(100L)).thenReturn(Optional.of(membre));
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(paiementRepository.existsByMembreIdAndStatut(anyLong(), any())).thenReturn(false);
+
+        PaiementMobileMoneyRequest req = buildRequest(PaiementMode.MTN_MOBILE_MONEY);
+        req.setMontant(new BigDecimal("1000")); // inférieur à 5000 XAF requis
+
+        assertThatThrownBy(() -> paiementService.initierPaiement(req, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("insuffisant");
     }
 
     // ── traiterCallbackMonetbil ───────────────────────────────────────────────
@@ -214,17 +268,15 @@ class PaiementServiceTest {
 
     @Test
     void callback_signature_invalide_rejete() {
-        // Payload construit manuellement avec une fausse signature
         Map<String, String> payload = new HashMap<>();
         payload.put("item_ref",    "REF-001");
         payload.put("payment_ref", "PAY-123");
         payload.put("status",      "SUCCESS");
         payload.put("sign",        "0000-mauvaise-signature");
 
-        ApiResponse<String> result = paiementService.traiterCallbackMonetbil(payload);
-
-        assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getMessage()).contains("Signature");
+        assertThatThrownBy(() -> paiementService.traiterCallbackMonetbil(payload))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("Signature");
         verify(paiementRepository, never()).findByReferenceTransactionForUpdate(any());
     }
 

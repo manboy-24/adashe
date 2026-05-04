@@ -1,6 +1,7 @@
 package com.tontine.repository;
 
 import com.tontine.entity.Paiement;
+import com.tontine.enums.PaiementStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -24,6 +25,9 @@ public interface PaiementRepository extends JpaRepository<Paiement, Long> {
     @Query("SELECT p FROM Paiement p WHERE p.gatewayTransactionId = :gwId")
     Optional<Paiement> findByGatewayTransactionIdForUpdate(@Param("gwId") String gwId);
     List<Paiement> findByMembreIdOrderByCreatedAtDesc(Long membreId);
+
+    /** Vérifie qu'un paiement EN_ATTENTE n'existe pas déjà pour ce membre (anti-doublon). */
+    boolean existsByMembreIdAndStatut(Long membreId, PaiementStatus statut);
 
     /** Tous les paiements d'un utilisateur, toutes tontines confondues. */
     @Query("SELECT p FROM Paiement p JOIN FETCH p.membre m JOIN FETCH m.utilisateur u WHERE u.id = :userId ORDER BY p.createdAt DESC")

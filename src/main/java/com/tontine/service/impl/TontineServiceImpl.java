@@ -105,11 +105,13 @@ public class TontineServiceImpl implements TontineService {
                 : cotisationRepository.sumMontantPayeGroupByMembreIds(tousMembreIds).stream()
                         .collect(Collectors.toMap(r -> (Long) r[0], r -> (BigDecimal) r[1]));
 
-        Map<Long, Set<Long>> payesParTontine = new HashMap<>();
-        for (Tontine t : tontines) {
-            payesParTontine.put(t.getId(), cotisationRepository
-                    .findMembreIdsAyantPayePourCycle(t.getId(), t.getCycleActuel()));
-        }
+        // 1 query pour tous les cycles actuels (remplace la boucle N×findMembreIdsAyantPayePourCycle)
+        Map<Long, Set<Long>> payesParTontine = cotisationRepository
+                .findMembreIdsAyantPayePourCyclesActuels(tontineIds).stream()
+                .collect(Collectors.groupingBy(
+                        r -> (Long) r[0],
+                        Collectors.mapping(r -> (Long) r[1], Collectors.toSet())));
+        tontines.forEach(t -> payesParTontine.putIfAbsent(t.getId(), Collections.emptySet()));
 
         Long currentUserId = null;
         try { currentUserId = securityUtil.getCurrentUserId(); } catch (Exception ignored) {}

@@ -13,7 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "utilisateurs")
+@Table(name = "utilisateurs", indexes = {
+        @Index(name = "idx_utilisateur_refresh_token",      columnList = "refresh_token"),
+        @Index(name = "idx_utilisateur_prev_refresh_token", columnList = "previous_refresh_token_hash")
+})
 @EntityListeners(AuditingEntityListener.class)
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class Utilisateur {

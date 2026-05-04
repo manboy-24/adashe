@@ -1,5 +1,7 @@
 package com.tontine.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,6 +13,8 @@ import java.util.concurrent.Executor;
 
 @Configuration
 public class AsyncConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(AsyncConfig.class);
 
     /**
      * Copie le MDC du thread HTTP vers le thread async.
@@ -31,13 +35,17 @@ public class AsyncConfig {
     @Bean(name = "notifExecutor")
     public Executor notifExecutor() {
         ThreadPoolTaskExecutor exec = new ThreadPoolTaskExecutor();
-        exec.setCorePoolSize(5);
-        exec.setMaxPoolSize(20);
-        exec.setQueueCapacity(200);
+        exec.setCorePoolSize(10);
+        exec.setMaxPoolSize(50);
+        exec.setQueueCapacity(1000);
         exec.setThreadNamePrefix("notif-async-");
         exec.setTaskDecorator(MDC_DECORATOR);
         exec.setWaitForTasksToCompleteOnShutdown(true);
         exec.setAwaitTerminationSeconds(15);
+        // Log et abandonne si la file est saturée (évite de bloquer le thread appelant)
+        exec.setRejectedExecutionHandler(
+            (r, pool) -> log.error("[notifExecutor] File saturée ({} tâches) — notification abandonnée", pool.getQueue().size())
+        );
         exec.initialize();
         return exec;
     }
@@ -52,6 +60,10 @@ public class AsyncConfig {
         exec.setTaskDecorator(MDC_DECORATOR);
         exec.setWaitForTasksToCompleteOnShutdown(true);
         exec.setAwaitTerminationSeconds(30);
+        // Log l'abandon d'un audit — ne jamais bloquer silencieusement
+        exec.setRejectedExecutionHandler(
+            (r, pool) -> log.error("[auditExecutor] File saturée ({} tâches) — entrée d'audit PERDUE, investiguer immédiatement", pool.getQueue().size())
+        );
         exec.initialize();
         return exec;
     }

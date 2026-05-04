@@ -18,12 +18,14 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
+      pool-name: TontineHikariCP
       maximum-pool-size: 50
       minimum-idle: 10
       connection-timeout: 10000
       idle-timeout: 300000
       max-lifetime: 600000
       keepalive-time: 60000
+      leak-detection-threshold: 60000   # alerte si une connexion est tenue > 60 s
 
   # ── Flyway ────────────────────────────────────────────────────────────────
   flyway:

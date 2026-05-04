@@ -9,12 +9,16 @@ import com.tontine.enums.VirementAmendeStatut;
 import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.gateway.MonetbilGateway;
+import com.tontine.repository.PaiementRepository;
 import com.tontine.repository.VirementAmendeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
@@ -33,8 +37,13 @@ import java.util.Map;
 public class VirementAmendeService {
 
     private final VirementAmendeRepository virementAmendeRepository;
+    private final PaiementRepository paiementRepository;
     private final MonetbilGateway monetbilGateway;
     private final DeveloppeurCompteConfig developpeurCompte;
+
+    @Lazy
+    @Autowired
+    private VirementAmendeService self;
 
     @Value("${monetbil.service-key}")
     private String monetbilServiceKey;
@@ -71,23 +80,48 @@ public class VirementAmendeService {
         virementAmendeRepository.save(virement);
     }
 
-    /** Relance un virement échoué depuis l'interface admin. */
-    @Transactional
+    /**
+     * Relance un virement échoué depuis l'interface admin.
+     * Pas de @Transactional ici : l'appel HTTP Monetbil se fait hors transaction
+     * pour ne pas maintenir un verrou DB pendant toute la durée de la requête réseau.
+     */
     public VirementAmende retenterVirement(Long virementId) {
-        VirementAmende virement = virementAmendeRepository.findById(virementId)
-                .orElseThrow(() -> new ResourceNotFoundException("Virement amende non trouvé: " + virementId));
+        VirementAmende virement = self.claimerRetry(virementId);
+        String ref = "AMENDE-RETRY-" + virement.getId() + "-" + virement.getReferenceTontine().replace("TONTINE-", "");
+        executerTransfert(virement, ref);
+        return self.enregistrerResultat(virement);
+    }
 
+    /** Tx courte 1 : verrou pessimiste + bascule EN_ATTENTE, commit immédiat. */
+    @Transactional
+    public VirementAmende claimerRetry(Long virementId) {
+        VirementAmende virement = virementAmendeRepository.findByIdForUpdate(virementId)
+                .orElseThrow(() -> new ResourceNotFoundException("Virement amende non trouvé: " + virementId));
         if (virement.getStatut() != VirementAmendeStatut.ECHEC) {
             throw new BadRequestException("Seuls les virements en échec peuvent être relancés");
         }
-
         virement.setStatut(VirementAmendeStatut.EN_ATTENTE);
         virement.setMessageErreur(null);
         virement.setReferenceTransfert(null);
-
-        String ref = "AMENDE-RETRY-" + virement.getId() + "-" + virement.getReferenceTontine().replace("TONTINE-", "");
-        executerTransfert(virement, ref);
         return virementAmendeRepository.save(virement);
+    }
+
+    /** Tx courte 2 : persiste le résultat de l'appel HTTP. */
+    @Transactional
+    public VirementAmende enregistrerResultat(VirementAmende virement) {
+        return virementAmendeRepository.save(virement);
+    }
+
+    /**
+     * Déclenche effectuerVirement en arrière-plan, hors de la transaction du webhook.
+     * La transaction du webhook commit d'abord (paiement → PAYE), puis le virement
+     * s'exécute dans le pool notifExecutor avec sa propre transaction.
+     */
+    @Async("notifExecutor")
+    public void effectuerVirementAsync(Long paiementId, BigDecimal montantAmende) {
+        Paiement paiement = paiementRepository.findById(paiementId)
+                .orElseThrow(() -> new ResourceNotFoundException("Paiement non trouvé: " + paiementId));
+        self.effectuerVirement(paiement, montantAmende);
     }
 
     public Page<VirementAmende> listerVirements(VirementAmendeStatut statut, Pageable pageable) {

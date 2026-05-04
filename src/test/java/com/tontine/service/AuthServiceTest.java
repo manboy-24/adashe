@@ -10,6 +10,7 @@ import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.impl.AuthServiceImpl;
+import com.tontine.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,13 +38,15 @@ class AuthServiceTest {
     @Mock private NotificationService notificationService;
     @Mock private SmsAsyncService smsAsyncService;
     @Mock private com.tontine.service.AuditService auditService;
+    @Mock private SecurityUtil securityUtil;
 
     @InjectMocks
     private AuthServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "otpExpiration", 5);
+        ReflectionTestUtils.setField(service, "otpExpiration",  5);
+        ReflectionTestUtils.setField(service, "securityUtil",   securityUtil);
     }
 
     // ── inscrire ──────────────────────────────────────────────────────────────
@@ -224,6 +227,7 @@ class AuthServiceTest {
                 .refreshTokenExpiration(LocalDateTime.now().plusDays(7))
                 .build();
 
+        when(securityUtil.getCurrentUserId()).thenReturn(1L);
         when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(u));
         when(utilisateurRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -232,5 +236,14 @@ class AuthServiceTest {
         assertTrue(result.isSuccess());
         assertNull(u.getRefreshToken());
         assertNull(u.getRefreshTokenExpiration());
+    }
+
+    @Test
+    void deconnecter_autre_utilisateur_leve_ForbiddenException() {
+        when(securityUtil.getCurrentUserId()).thenReturn(2L);
+
+        assertThrows(com.tontine.exception.ForbiddenException.class,
+                () -> service.deconnecter(1L));
+        verify(utilisateurRepository, never()).findById(any());
     }
 }

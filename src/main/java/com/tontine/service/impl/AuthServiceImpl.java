@@ -12,8 +12,10 @@ import com.tontine.service.AuthService;
 import com.tontine.service.NotificationService;
 import com.tontine.service.SmsAsyncService;
 import com.tontine.util.OtpUtil;
+import com.tontine.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -34,6 +36,9 @@ public class AuthServiceImpl implements AuthService {
     private final NotificationService notificationService;
     private final SmsAsyncService smsAsyncService;
     private final AuditService auditService;
+
+    @Autowired
+    private SecurityUtil securityUtil;
 
     @Value("${otp.expiration-minutes:5}") private int otpExpiration;
 
@@ -96,8 +101,8 @@ public class AuthServiceImpl implements AuthService {
         Utilisateur u = utilisateurRepository.findByTelephone(telephone)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
-        // Rate limit : un seul OTP valide à la fois
-        if (u.getOtpExpiration() != null && LocalDateTime.now().isBefore(u.getOtpExpiration().minusSeconds(30))) {
+        // Rate limit : bloquer pendant toute la durée de validité de l'OTP en cours
+        if (u.getOtpExpiration() != null && LocalDateTime.now().isBefore(u.getOtpExpiration())) {
             long secondes = java.time.Duration.between(LocalDateTime.now(), u.getOtpExpiration()).getSeconds();
             throw new BadRequestException("Code déjà envoyé. Attendez " + secondes + " secondes avant de redemander.");
         }
@@ -182,10 +187,14 @@ public class AuthServiceImpl implements AuthService {
     // ── Déconnexion : invalide le refresh token en base ─────────────────────
     @Override
     public ApiResponse<String> deconnecter(Long userId) {
+        Long currentUserId = securityUtil.getCurrentUserId();
+        if (!currentUserId.equals(userId)) {
+            throw new ForbiddenException("Vous ne pouvez vous déconnecter que de votre propre compte");
+        }
         utilisateurRepository.findById(userId).ifPresent(u -> {
             u.setRefreshToken(null);
             u.setRefreshTokenExpiration(null);
-            u.setFcmToken(null); // Stoppe les push FCM après déconnexion
+            u.setFcmToken(null);
             utilisateurRepository.save(u);
             log.info("Déconnexion: userId={}", userId);
             auditService.log(u.getId(), u.getTelephone(), "DECONNEXION", true, null);

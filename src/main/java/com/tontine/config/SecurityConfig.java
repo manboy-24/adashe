@@ -41,6 +41,7 @@ public class SecurityConfig {
             "/auth/pin/reset/confirmer",
             "/auth/refresh-token",
             "/paiements/webhook/**",
+            "/dons/webhook/**",
             "/actuator/health",
             "/actuator/info"
     };

@@ -1,5 +1,6 @@
 package com.tontine.controller;
 
+import com.tontine.dto.request.PaiementEspecesRequest;
 import com.tontine.dto.request.PaiementMobileMoneyRequest;
 import com.tontine.dto.response.*;
 import com.tontine.service.PaiementService;
@@ -27,6 +28,14 @@ public class PaiementController {
             @Valid @RequestBody PaiementMobileMoneyRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(paiementService.initierPaiement(request, securityUtil.getCurrentUserId()));
+    }
+
+    @PostMapping("/especes/initier")
+    @Operation(summary = "Admin paie en MoMo pour un membre qui a remis du cash — affiché 'Espèces' des deux côtés")
+    public ResponseEntity<PaiementResponse> initierPaiementEspeces(
+            @Valid @RequestBody PaiementEspecesRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(paiementService.initierPaiementEspeces(request, securityUtil.getCurrentUserId()));
     }
 
     @GetMapping("/mes-paiements")

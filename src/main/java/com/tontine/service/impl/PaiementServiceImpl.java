@@ -2,6 +2,7 @@ package com.tontine.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tontine.dto.request.PaiementEspecesRequest;
 import com.tontine.dto.request.PaiementMobileMoneyRequest;
 import com.tontine.dto.response.*;
 import com.tontine.entity.*;
@@ -190,6 +191,116 @@ public class PaiementServiceImpl implements PaiementService {
         }
     }
 
+    // ── Paiement espèces : admin paie en MoMo pour un membre ─────────────────
+
+    @Override
+    @Transactional
+    public PaiementResponse initierPaiementEspeces(PaiementEspecesRequest request, Long adminId) {
+
+        Tontine tontine = tontineRepository.findById(request.getTontineId())
+                .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
+
+        // Seul le créateur de la tontine peut effectuer ce paiement
+        if (!tontine.getCreateur().getId().equals(adminId)) {
+            throw new ForbiddenException("Seul le créateur de la tontine peut payer pour un membre");
+        }
+
+        MembreTontine membre = membreRepository.findById(request.getMembreId())
+                .orElseThrow(() -> new ResourceNotFoundException("Membre non trouvé"));
+
+        if (!membre.getTontine().getId().equals(tontine.getId())) {
+            throw new BadRequestException("Ce membre n'appartient pas à cette tontine");
+        }
+
+        if (request.getOperateurReel() != PaiementMode.MTN_MOBILE_MONEY
+                && request.getOperateurReel() != PaiementMode.ORANGE_MONEY) {
+            throw new BadRequestException("Opérateur invalide. Choisissez MTN_MOBILE_MONEY ou ORANGE_MONEY");
+        }
+
+        int targetCycle = (request.getNumeroCycle() != null && request.getNumeroCycle() >= 1)
+                ? request.getNumeroCycle() : tontine.getCycleActuel();
+
+        boolean dejaPaye = cotisationRepository
+                .findByMembreIdAndTontineIdAndNumeroCycle(membre.getId(), tontine.getId(), targetCycle)
+                .filter(c -> c.getStatut() == PaiementStatus.PAYE)
+                .isPresent();
+        if (dejaPaye) {
+            throw new BadRequestException("La cotisation pour ce cycle est déjà enregistrée");
+        }
+
+        if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
+            throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");
+        }
+
+        Utilisateur admin = utilisateurRepository.findById(adminId)
+                .orElseThrow(() -> new ResourceNotFoundException("Administrateur non trouvé"));
+
+        String reference = "TONTINE-ESP-" + UUID.randomUUID().toString().substring(0, 10).toUpperCase();
+
+        Paiement paiement = Paiement.builder()
+                .membre(membre)
+                .montant(request.getMontant())
+                .montantAmende(BigDecimal.ZERO)
+                .devise("XAF")
+                .operateur(PaiementMode.ESPECES)        // affiché "Espèces" partout
+                .modePaiementReel(request.getOperateurReel()) // MTN/Orange réel
+                .statut(PaiementStatus.EN_ATTENTE)
+                .referenceTransaction(reference)
+                .numeroPaieur(request.getNumeroPaiement())
+                .payePourCompte(true)
+                .adminPayeur(admin)
+                .build();
+        paiement = paiementRepository.save(paiement);
+
+        try {
+            log.info("Paiement espèces admin: operateur={} numero={} montant={}",
+                    request.getOperateurReel(), request.getNumeroPaiement(), request.getMontant());
+
+            MultiValueMap<String, String> payload = buildMonetbilPayloadRaw(
+                    request.getOperateurReel(), request.getNumeroPaiement(),
+                    request.getMontant(), reference, membre, tontine);
+
+            JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
+            int success = response.path("success").asInt(0);
+
+            if (success == 1) {
+                paiement.setGatewayTransactionId(response.path("payment_ref").asText(""));
+                paiement.setGatewayPaymentUrl(response.path("widget_url").asText(""));
+                paiementRepository.save(paiement);
+
+                String instructions = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY
+                        ? "Confirmez le paiement sur votre téléphone MTN MoMo."
+                        : "Confirmez le paiement via Orange Money.";
+
+                return PaiementResponse.builder()
+                        .id(paiement.getId())
+                        .referenceTransaction(reference)
+                        .montant(request.getMontant())
+                        .devise("XAF")
+                        .operateur(PaiementMode.ESPECES)
+                        .statut(PaiementStatus.EN_ATTENTE)
+                        .numeroPaieur(request.getNumeroPaiement())
+                        .instructions(instructions)
+                        .payePourCompte(true)
+                        .createdAt(paiement.getCreatedAt())
+                        .build();
+            } else {
+                String message = response.path("message").asText("Erreur opérateur");
+                paiement.setStatut(PaiementStatus.ANNULE);
+                paiement.setMessageOperateur(message);
+                paiementRepository.save(paiement);
+                throw new BadRequestException("Échec initialisation paiement: " + message);
+            }
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Erreur API Monetbil (espèces): {}", e.getMessage());
+            paiement.setStatut(PaiementStatus.ANNULE);
+            paiementRepository.save(paiement);
+            throw new BadRequestException("Service de paiement temporairement indisponible");
+        }
+    }
+
     // ── Traiter le callback Monetbil ─────────────────────────────────────────
 
     @Override
@@ -240,13 +351,35 @@ public class PaiementServiceImpl implements PaiementService {
                 log.info("Virement amende planifié (async): {} XAF — ref={}", paiement.getMontantAmende(), reference);
             }
 
-            notificationService.creerNotification(
-                    paiement.getMembre().getUtilisateur(),
-                    paiement.getMembre().getTontine(),
-                    "✅ Paiement confirmé",
-                    "Votre cotisation de " + paiement.getMontant() + " XAF a été confirmée.",
-                    com.tontine.enums.NotificationType.PAIEMENT_RECU
-            );
+            if (Boolean.TRUE.equals(paiement.getPayePourCompte())) {
+                // Paiement espèces : notifier le membre
+                notificationService.creerNotification(
+                        paiement.getMembre().getUtilisateur(),
+                        paiement.getMembre().getTontine(),
+                        "💵 Cotisation enregistrée",
+                        "Votre cotisation de " + paiement.getMontant() + " XAF a été enregistrée en espèces par l'administrateur.",
+                        com.tontine.enums.NotificationType.PAIEMENT_RECU
+                );
+                // Notifier l'admin
+                if (paiement.getAdminPayeur() != null) {
+                    notificationService.creerNotification(
+                            paiement.getAdminPayeur(),
+                            paiement.getMembre().getTontine(),
+                            "✅ Paiement espèces confirmé",
+                            "Paiement de " + paiement.getMontant() + " XAF confirmé pour "
+                                    + paiement.getMembre().getUtilisateur().getNom() + ".",
+                            com.tontine.enums.NotificationType.PAIEMENT_RECU
+                    );
+                }
+            } else {
+                notificationService.creerNotification(
+                        paiement.getMembre().getUtilisateur(),
+                        paiement.getMembre().getTontine(),
+                        "✅ Paiement confirmé",
+                        "Votre cotisation de " + paiement.getMontant() + " XAF a été confirmée.",
+                        com.tontine.enums.NotificationType.PAIEMENT_RECU
+                );
+            }
 
             log.info("Cotisation enregistrée après paiement Monetbil: ref={}", reference);
             return ApiResponse.success(null, "Paiement confirmé");
@@ -288,17 +421,27 @@ public class PaiementServiceImpl implements PaiementService {
             String reference,
             MembreTontine membre,
             Tontine tontine) {
+        return buildMonetbilPayloadRaw(
+                request.getOperateur(), request.getNumeroPaiement(),
+                request.getMontant(), reference, membre, tontine);
+    }
 
-        // Codes opérateur Monetbil Cameroun
-        String operator = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                ? "MTN_MOMO_CM" : "ORANGE_CM";
+    private MultiValueMap<String, String> buildMonetbilPayloadRaw(
+            PaiementMode operateur,
+            String numeroPaiement,
+            BigDecimal montant,
+            String reference,
+            MembreTontine membre,
+            Tontine tontine) {
+
+        String operator = operateur == PaiementMode.MTN_MOBILE_MONEY ? "MTN_MOMO_CM" : "ORANGE_CM";
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        String phone = request.getNumeroPaiement().replaceAll("\\s+", "");
+        String phone = numeroPaiement.replaceAll("\\s+", "");
         if (!phone.startsWith("237")) phone = "237" + phone;
 
         params.add("service",    monetbilServiceKey);
-        params.add("amount",     String.valueOf(request.getMontant().longValue()));
+        params.add("amount",     String.valueOf(montant.longValue()));
         params.add("phone",      phone);
         params.add("msisdn",     phone);
         params.add("operator",   operator);
@@ -387,6 +530,7 @@ public class PaiementServiceImpl implements PaiementService {
                 .numeroPaieur(p.getNumeroPaieur())
                 .messageOperateur(p.getMessageOperateur())
                 .urlPaiement(p.getGatewayPaymentUrl())
+                .payePourCompte(p.getPayePourCompte())
                 .createdAt(p.getCreatedAt())
                 .build();
     }

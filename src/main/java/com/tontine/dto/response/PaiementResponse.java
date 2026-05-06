@@ -25,4 +25,6 @@ public class PaiementResponse {
      */
     private String instructions;
     private LocalDateTime createdAt;
+    /** true si l'admin a payé en MoMo pour le compte d'un membre (cash) */
+    private Boolean payePourCompte;
 }

@@ -65,6 +65,21 @@ public class Paiement {
 
     private LocalDateTime datePaiement;
 
+    // ── Paiement espèces par l'admin ─────────────────────────────────────────
+    /** true = l'admin a payé en MoMo pour le compte d'un membre qui a remis du cash */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean payePourCompte = false;
+
+    /** Opérateur réel utilisé par l'admin (MTN/Orange) — null si paiement normal */
+    @Enumerated(EnumType.STRING)
+    private PaiementMode modePaiementReel;
+
+    /** Admin qui a effectué le virement pour le membre */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "admin_payeur_id")
+    private Utilisateur adminPayeur;
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;

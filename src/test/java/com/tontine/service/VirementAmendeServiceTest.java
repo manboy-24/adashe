@@ -218,27 +218,29 @@ class VirementAmendeServiceTest {
         verify(virementAmendeRepository).save(virement);
     }
 
-    // ── effectuerVirementAsync ────────────────────────────────────────────────
+    // ── effectuerVirementAsyncParId ───────────────────────────────────────────
 
     @Test
-    void effectuerVirementAsync_charge_paiement_et_delegue_a_self() {
-        Paiement paiement = paiement();
-        BigDecimal montant = new BigDecimal("200");
+    void effectuerVirementAsyncParId_virement_inexistant_ne_fait_rien() {
+        when(virementAmendeRepository.findById(99L)).thenReturn(Optional.empty());
 
-        when(paiementRepository.findById(1L)).thenReturn(Optional.of(paiement));
+        // ne doit pas lever d'exception
+        service.effectuerVirementAsyncParId(99L);
 
-        service.effectuerVirementAsync(1L, montant);
-
-        verify(selfMock).effectuerVirement(paiement, montant);
+        verify(selfMock, never()).enregistrerResultat(any());
     }
 
     @Test
-    void effectuerVirementAsync_paiement_inexistant_leve_ResourceNotFoundException() {
-        when(paiementRepository.findById(99L)).thenReturn(Optional.empty());
+    void effectuerVirementAsyncParId_virement_pas_en_attente_ne_fait_rien() {
+        VirementAmende virement = VirementAmende.builder().id(1L)
+                .statut(VirementAmendeStatut.SUCCES)
+                .referenceTontine("TONTINE-ABC")
+                .build();
+        when(virementAmendeRepository.findById(1L)).thenReturn(Optional.of(virement));
 
-        assertThatThrownBy(() -> service.effectuerVirementAsync(99L, new BigDecimal("200")))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("99");
+        service.effectuerVirementAsyncParId(1L);
+
+        verify(selfMock, never()).enregistrerResultat(any());
     }
 
     // ── listerVirements ───────────────────────────────────────────────────────

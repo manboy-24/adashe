@@ -20,10 +20,11 @@ import java.util.Set;
  * ils survivent aux redémarrages et fonctionnent sur plusieurs instances.
  *
  * Limites appliquées :
- *  - /auth/inscription    → 5 req / 10 min
- *  - /auth/renvoyer-otp   → 5 req / 10 min
- *  - /auth/pin/connexion  → 10 req / 5 min  (en plus du blocage par compte)
- *  - /paiements/initier   → 5 req / 1 min
+ *  - /auth/inscrire              → 5 req / 10 min
+ *  - /auth/renvoyer-otp          → 5 req / 10 min
+ *  - /auth/pin/connexion         → 10 req / 5 min  (en plus du blocage par compte)
+ *  - /paiements/initier          → 5 req / 1 min
+ *  - /paiements/especes/initier  → 5 req / 1 min
  */
 @Component
 @Order(1)
@@ -39,11 +40,14 @@ public class OtpRateLimitFilter implements Filter {
     private static final int  LIMIT_PAIEMENT     = 5;
 
     private static final Set<String> OTP_PATHS = Set.of(
-            "/auth/inscription",
+            "/auth/inscrire",
             "/auth/renvoyer-otp"
     );
-    private static final String PIN_PATH      = "/auth/pin/connexion";
-    private static final String PAIEMENT_PATH = "/paiements/initier";
+    private static final String PIN_PATH = "/auth/pin/connexion";
+    private static final Set<String> PAIEMENT_PATHS = Set.of(
+            "/paiements/initier",
+            "/paiements/especes/initier"
+    );
 
     private final RateLimitService rateLimitService;
 
@@ -69,7 +73,7 @@ public class OtpRateLimitFilter implements Filter {
                 sendTooManyRequests(response, "Trop de tentatives. Réessayez dans 5 minutes.");
                 return;
             }
-        } else if (uri.endsWith(PAIEMENT_PATH)) {
+        } else if (PAIEMENT_PATHS.stream().anyMatch(uri::endsWith)) {
             if (!rateLimitService.isAllowed(ip, "PAIEMENT", LIMIT_PAIEMENT, WINDOW_PAIEMENT_MS)) {
                 log.warn("[RateLimit] IP {} bloquée sur {}", ip, uri);
                 sendTooManyRequests(response, "Trop de tentatives de paiement. Réessayez dans 1 minute.");

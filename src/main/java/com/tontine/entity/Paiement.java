@@ -80,6 +80,10 @@ public class Paiement {
     @JoinColumn(name = "admin_payeur_id")
     private Utilisateur adminPayeur;
 
+    /** Cycle ciblé par ce paiement — persiste targetCycle pour que le webhook l'utilise */
+    @Column(name = "numero_cycle")
+    private Integer numeroCycle;
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;

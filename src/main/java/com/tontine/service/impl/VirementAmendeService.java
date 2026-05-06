@@ -113,15 +113,39 @@ public class VirementAmendeService {
     }
 
     /**
-     * Déclenche effectuerVirement en arrière-plan, hors de la transaction du webhook.
-     * La transaction du webhook commit d'abord (paiement → PAYE), puis le virement
-     * s'exécute dans le pool notifExecutor avec sa propre transaction.
+     * Crée un VirementAmende(EN_ATTENTE) à l'intérieur de la transaction appelante.
+     * Doit être appelé depuis le webhook @Transactional avant le commit,
+     * puis dispatché via afterCommit → effectuerVirementAsyncParId.
+     */
+    @Transactional
+    public VirementAmende creerVirementEnAttente(Paiement paiement, BigDecimal montantAmende) {
+        PaiementMode operateurEffectif = paiement.getModePaiementReel() != null
+                ? paiement.getModePaiementReel() : paiement.getOperateur();
+        String numeroBenef = resoudreNumeroDeveloppeur(operateurEffectif);
+
+        VirementAmende virement = VirementAmende.builder()
+                .paiement(paiement)
+                .montant(montantAmende)
+                .operateur(operateurEffectif)
+                .numeroBeneficiaire(numeroBenef)
+                .referenceTontine(paiement.getReferenceTransaction())
+                .statut(VirementAmendeStatut.EN_ATTENTE)
+                .build();
+        return virementAmendeRepository.save(virement);
+    }
+
+    /**
+     * Exécute le virement Monetbil en arrière-plan, après que la transaction du webhook
+     * a commité — garantit qu'aucun fonds ne part si le webhook rollback.
+     * L'appel HTTP se fait hors @Transactional pour ne pas retenir de connexion Hikari.
      */
     @Async("notifExecutor")
-    public void effectuerVirementAsync(Long paiementId, BigDecimal montantAmende) {
-        Paiement paiement = paiementRepository.findById(paiementId)
-                .orElseThrow(() -> new ResourceNotFoundException("Paiement non trouvé: " + paiementId));
-        self.effectuerVirement(paiement, montantAmende);
+    public void effectuerVirementAsyncParId(Long virementId) {
+        VirementAmende virement = virementAmendeRepository.findById(virementId).orElse(null);
+        if (virement == null || virement.getStatut() != VirementAmendeStatut.EN_ATTENTE) return;
+        String ref = "AMENDE-" + virement.getReferenceTontine().replace("TONTINE-", "");
+        executerTransfert(virement, ref);
+        self.enregistrerResultat(virement);
     }
 
     public Page<VirementAmende> listerVirements(VirementAmendeStatut statut, Pageable pageable) {

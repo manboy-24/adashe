@@ -8,6 +8,7 @@ import com.tontine.dto.response.*;
 import com.tontine.entity.*;
 import com.tontine.enums.*;
 import com.tontine.exception.*;
+import com.tontine.enums.MembreStatut;
 import com.tontine.repository.*;
 import com.tontine.gateway.MonetbilGateway;
 import com.tontine.service.*;
@@ -17,6 +18,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
@@ -85,6 +88,11 @@ public class PaiementServiceImpl implements PaiementService {
         // Générer la référence unique
         String reference = "TONTINE-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
 
+        // Rejeter un numeroCycle dans le futur (anti-double-débit, bug_007)
+        if (request.getNumeroCycle() != null && request.getNumeroCycle() > tontine.getCycleActuel()) {
+            throw new BadRequestException("Cycle invalide : maximum " + tontine.getCycleActuel());
+        }
+
         // Rejeter si cotisation déjà payée pour ce cycle (anti-doublon)
         int targetCycle = (request.getNumeroCycle() != null && request.getNumeroCycle() >= 1)
                 ? request.getNumeroCycle() : tontine.getCycleActuel();
@@ -135,6 +143,7 @@ public class PaiementServiceImpl implements PaiementService {
                 .statut(PaiementStatus.EN_ATTENTE)
                 .referenceTransaction(reference)
                 .numeroPaieur(request.getNumeroPaiement())
+                .numeroCycle(targetCycle)
                 .build();
         paiement = paiementRepository.save(paiement);
 
@@ -212,9 +221,19 @@ public class PaiementServiceImpl implements PaiementService {
             throw new BadRequestException("Ce membre n'appartient pas à cette tontine");
         }
 
+        // Vérifier que le membre est actif dans la tontine (bug_028)
+        if (!Boolean.TRUE.equals(membre.getActif()) || membre.getStatutMembre() != MembreStatut.ACTIF) {
+            throw new BadRequestException("Ce membre n'est pas actif dans la tontine");
+        }
+
         if (request.getOperateurReel() != PaiementMode.MTN_MOBILE_MONEY
                 && request.getOperateurReel() != PaiementMode.ORANGE_MONEY) {
             throw new BadRequestException("Opérateur invalide. Choisissez MTN_MOBILE_MONEY ou ORANGE_MONEY");
+        }
+
+        // Rejeter un numeroCycle dans le futur (bug_007)
+        if (request.getNumeroCycle() != null && request.getNumeroCycle() > tontine.getCycleActuel()) {
+            throw new BadRequestException("Cycle invalide : maximum " + tontine.getCycleActuel());
         }
 
         int targetCycle = (request.getNumeroCycle() != null && request.getNumeroCycle() >= 1)
@@ -232,6 +251,27 @@ public class PaiementServiceImpl implements PaiementService {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");
         }
 
+        // Valider le montant contre la cotisation attendue (bug_015)
+        BigDecimal montantAmende = BigDecimal.ZERO;
+        if (request.getNumeroCycle() != null
+                && request.getNumeroCycle() >= 1
+                && request.getNumeroCycle() < tontine.getCycleActuel()) {
+            montantAmende = tontine.getMontantAmende();
+            BigDecimal montantAttendu = tontine.getMontantContribution().add(montantAmende);
+            if (request.getMontant().compareTo(montantAttendu) < 0) {
+                throw new BadRequestException(
+                        "Montant insuffisant pour le rattrapage : " + montantAttendu
+                        + " XAF requis (cotisation " + tontine.getMontantContribution()
+                        + " + amende " + montantAmende + ")");
+            }
+        } else {
+            if (request.getMontant().compareTo(tontine.getMontantContribution()) < 0) {
+                throw new BadRequestException(
+                        "Montant insuffisant : " + tontine.getMontantContribution()
+                        + " XAF requis pour la cotisation");
+            }
+        }
+
         Utilisateur admin = utilisateurRepository.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException("Administrateur non trouvé"));
 
@@ -240,15 +280,16 @@ public class PaiementServiceImpl implements PaiementService {
         Paiement paiement = Paiement.builder()
                 .membre(membre)
                 .montant(request.getMontant())
-                .montantAmende(BigDecimal.ZERO)
+                .montantAmende(montantAmende)
                 .devise("XAF")
-                .operateur(PaiementMode.ESPECES)        // affiché "Espèces" partout
-                .modePaiementReel(request.getOperateurReel()) // MTN/Orange réel
+                .operateur(PaiementMode.ESPECES)
+                .modePaiementReel(request.getOperateurReel())
                 .statut(PaiementStatus.EN_ATTENTE)
                 .referenceTransaction(reference)
                 .numeroPaieur(request.getNumeroPaiement())
                 .payePourCompte(true)
                 .adminPayeur(admin)
+                .numeroCycle(targetCycle)
                 .build();
         paiement = paiementRepository.save(paiement);
 
@@ -344,11 +385,20 @@ public class PaiementServiceImpl implements PaiementService {
 
             enregistrerCotisationApresPaiement(paiement);
 
-            // Virer l'amende en arrière-plan — évite de bloquer le webhook Monetbil
+            // Persister le VirementAmende dans cette transaction puis le déclencher
+            // après le commit — garantit qu'aucun argent ne part si le webhook rollback
             if (paiement.getMontantAmende() != null
                     && paiement.getMontantAmende().compareTo(BigDecimal.ZERO) > 0) {
-                virementAmendeService.effectuerVirementAsync(paiement.getId(), paiement.getMontantAmende());
-                log.info("Virement amende planifié (async): {} XAF — ref={}", paiement.getMontantAmende(), reference);
+                VirementAmende virement = virementAmendeService.creerVirementEnAttente(
+                        paiement, paiement.getMontantAmende());
+                Long virementId = virement.getId();
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        virementAmendeService.effectuerVirementAsyncParId(virementId);
+                    }
+                });
+                log.info("Virement amende planifié après commit: {} XAF — ref={}", paiement.getMontantAmende(), reference);
             }
 
             if (Boolean.TRUE.equals(paiement.getPayePourCompte())) {
@@ -490,9 +540,12 @@ public class PaiementServiceImpl implements PaiementService {
         MembreTontine membre = paiement.getMembre();
         Tontine tontine = membre.getTontine();
 
-        // Vérifier si pas déjà enregistré ce cycle
+        // Utiliser le cycle persisté sur le paiement — fallback sur cycleActuel pour les anciens paiements
+        int numeroCycle = paiement.getNumeroCycle() != null
+                ? paiement.getNumeroCycle() : tontine.getCycleActuel();
+
         boolean existe = cotisationRepository
-                .findByMembreIdAndTontineIdAndNumeroCycle(membre.getId(), tontine.getId(), tontine.getCycleActuel())
+                .findByMembreIdAndTontineIdAndNumeroCycle(membre.getId(), tontine.getId(), numeroCycle)
                 .filter(c -> c.getStatut() == PaiementStatus.PAYE)
                 .isPresent();
 
@@ -506,7 +559,7 @@ public class PaiementServiceImpl implements PaiementService {
                     .membre(membre)
                     .montant(paiement.getMontant())
                     .montantAmende(amende)
-                    .numeroCycle(tontine.getCycleActuel())
+                    .numeroCycle(numeroCycle)
                     .statut(PaiementStatus.PAYE)
                     .estEnRetard(estRattrapage)
                     .datePaiement(java.time.LocalDate.now())

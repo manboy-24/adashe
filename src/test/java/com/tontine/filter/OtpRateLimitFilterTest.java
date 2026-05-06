@@ -35,10 +35,10 @@ class OtpRateLimitFilterTest {
 
         MockHttpServletResponse res = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
-        filter.doFilter(buildRequest("/api/auth/inscription", "10.0.0.1"), res, chain);
+        filter.doFilter(buildRequest("/api/auth/inscrire", "10.0.0.1"), res, chain);
 
         assertThat(res.getStatus()).isNotEqualTo(429);
-        assertThat(chain.getRequest()).isNotNull(); // la chaîne a été poursuivie
+        assertThat(chain.getRequest()).isNotNull();
     }
 
     @Test
@@ -71,7 +71,7 @@ class OtpRateLimitFilterTest {
                 .thenReturn(false);
 
         MockHttpServletResponse res = new MockHttpServletResponse();
-        filter.doFilter(buildRequest("/api/auth/inscription", "10.0.0.2"), res, new MockFilterChain());
+        filter.doFilter(buildRequest("/api/auth/inscrire", "10.0.0.2"), res, new MockFilterChain());
 
         assertThat(res.getStatus()).isEqualTo(429);
         assertThat(res.getContentAsString()).contains("Trop de tentatives");
@@ -100,6 +100,29 @@ class OtpRateLimitFilterTest {
         assertThat(res.getContentAsString()).contains("paiement");
     }
 
+    @Test
+    void paiement_especes_bloque_retourne_429() throws Exception {
+        when(rateLimitService.isAllowed(anyString(), eq("PAIEMENT"), anyInt(), anyLong()))
+                .thenReturn(false);
+
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        filter.doFilter(buildRequest("/api/paiements/especes/initier", "10.0.0.2"), res, new MockFilterChain());
+
+        assertThat(res.getStatus()).isEqualTo(429);
+        assertThat(res.getContentAsString()).contains("paiement");
+    }
+
+    @Test
+    void paiement_especes_autorise_passe_la_chaine() throws Exception {
+        when(rateLimitService.isAllowed(anyString(), eq("PAIEMENT"), anyInt(), anyLong()))
+                .thenReturn(true);
+
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        filter.doFilter(buildRequest("/api/paiements/especes/initier", "10.0.0.1"), res, new MockFilterChain());
+
+        assertThat(res.getStatus()).isNotEqualTo(429);
+    }
+
     // ── Routes non protégées ──────────────────────────────────────────────────
 
     @Test
@@ -117,7 +140,7 @@ class OtpRateLimitFilterTest {
     void inscription_transmet_endpoint_OTP() throws Exception {
         when(rateLimitService.isAllowed(any(), any(), anyInt(), anyLong())).thenReturn(true);
 
-        filter.doFilter(buildRequest("/api/auth/inscription", "10.0.0.4"),
+        filter.doFilter(buildRequest("/api/auth/inscrire", "10.0.0.4"),
                 new MockHttpServletResponse(), new MockFilterChain());
 
         verify(rateLimitService).isAllowed(eq("10.0.0.4"), eq("OTP"), anyInt(), anyLong());
@@ -139,7 +162,7 @@ class OtpRateLimitFilterTest {
     void header_x_forwarded_for_utilise_comme_ip() throws Exception {
         when(rateLimitService.isAllowed(any(), any(), anyInt(), anyLong())).thenReturn(true);
 
-        MockHttpServletRequest req = buildRequest("/api/auth/inscription", "127.0.0.1");
+        MockHttpServletRequest req = buildRequest("/api/auth/inscrire", "127.0.0.1");
         req.addHeader("X-Forwarded-For", "203.0.113.42, 10.0.0.1");
 
         filter.doFilter(req, new MockHttpServletResponse(), new MockFilterChain());

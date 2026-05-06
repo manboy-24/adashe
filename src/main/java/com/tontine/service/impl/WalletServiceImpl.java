@@ -4,6 +4,8 @@ import com.tontine.dto.request.CompteWalletRequest;
 import com.tontine.dto.response.CompteWalletResponse;
 import com.tontine.entity.CompteWallet;
 import com.tontine.entity.Utilisateur;
+import com.tontine.enums.PaiementMode;
+import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.CompteWalletRepository;
 import com.tontine.repository.UtilisateurRepository;
@@ -43,6 +45,11 @@ public class WalletServiceImpl implements WalletService {
                         .utilisateur(utilisateur)
                         .operateur(request.getOperateur())
                         .build());
+
+        if (request.getOperateur() != PaiementMode.ESPECES
+                && (request.getTelephone() == null || request.getTelephone().isBlank())) {
+            throw new BadRequestException("Le numéro de téléphone est requis pour Mobile Money");
+        }
 
         compte.setTelephone(request.getTelephone());
         compte.setActif(request.getActif());

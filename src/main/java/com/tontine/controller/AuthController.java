@@ -73,8 +73,8 @@ public class AuthController {
     @PostMapping("/refresh-token")
     @Operation(summary = "Rafraîchir le JWT")
     public ResponseEntity<ApiResponse<AuthResponse>> refreshToken(
-            @RequestParam String refreshToken) {
-        return ResponseEntity.ok(authService.rafraichirToken(refreshToken));
+            @Valid @RequestBody RefreshTokenRequest request) {
+        return ResponseEntity.ok(authService.rafraichirToken(request.getRefreshToken()));
     }
 
     @PostMapping("/logout")

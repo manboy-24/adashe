@@ -104,6 +104,19 @@ public class PaiementServiceImpl implements PaiementService {
             throw new BadRequestException("La cotisation pour ce cycle est déjà enregistrée");
         }
 
+        // Vérifier l'ordre des cycles : le membre doit payer dans l'ordre chronologique
+        if (targetCycle > 1) {
+            Set<Integer> cyclesTrackes = cotisationRepository.findCyclesTrackesAvant(tontine.getId(), targetCycle);
+            Set<Integer> cyclesPayes  = cotisationRepository.findCyclesPayesParMembre(membre.getId(), tontine.getId(), targetCycle);
+            cyclesTrackes.stream()
+                    .filter(c -> !cyclesPayes.contains(c))
+                    .min(Integer::compareTo)
+                    .ifPresent(premierImpaye -> {
+                        throw new BadRequestException(
+                            "Cycle " + premierImpaye + " non payé — réglez d'abord le cycle " + premierImpaye + " avant le cycle " + targetCycle);
+                    });
+        }
+
         // Rejeter si un paiement EN_ATTENTE existe déjà pour ce membre (anti-concurrent)
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");

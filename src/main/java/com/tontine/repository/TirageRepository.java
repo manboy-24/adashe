@@ -20,7 +20,11 @@ public interface TirageRepository extends JpaRepository<Tirage, Long> {
     @Query("SELECT COALESCE(SUM(t.montantDistribue), 0) FROM Tirage t WHERE t.tontine.id = :tontineId")
     BigDecimal sumMontantDistribueByTontineId(@Param("tontineId") Long tontineId);
 
-    /** Scheduler retards : tirages effectués à la date donnée (pour retrouver les tontines concernées). */
-    @Query("SELECT t FROM Tirage t WHERE t.dateTirage = :date")
+    /** Scheduler retards : tirages confirmés effectués à la date donnée. */
+    @Query("SELECT t FROM Tirage t WHERE t.dateTirage = :date AND t.confirme = true")
     List<Tirage> findByDateTirage(@Param("date") LocalDate date);
+
+    /** Batch : total distribué par tontine (évite N queries dans getMesTontines). */
+    @Query("SELECT t.tontine.id, COALESCE(SUM(t.montantDistribue), 0) FROM Tirage t WHERE t.tontine.id IN :ids GROUP BY t.tontine.id")
+    List<Object[]> sumMontantDistribueGroupByTontineIds(@Param("ids") List<Long> ids);
 }

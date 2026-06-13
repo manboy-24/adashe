@@ -9,6 +9,7 @@ import com.tontine.dto.response.UtilisateurResponse;
 import com.tontine.security.JwtService;
 import com.tontine.service.AuthService;
 import com.tontine.service.PinAuthService;
+import com.tontine.service.RateLimitService;
 import com.tontine.util.SecurityUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +28,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
 
-import static org.mockito.ArgumentMatchers.any;
+import org.junit.jupiter.api.BeforeEach;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -60,6 +62,12 @@ class AuthControllerTest {
     @MockBean private SecurityUtil securityUtil;
     @MockBean private JwtService jwtService;
     @MockBean private UserDetailsService userDetailsService;
+    @MockBean private RateLimitService rateLimitService;
+
+    @BeforeEach
+    void setUp() {
+        when(rateLimitService.isAllowed(anyString(), anyString(), anyInt(), anyLong())).thenReturn(true);
+    }
 
     // ── POST /auth/inscrire ───────────────────────────────────────────────────
 

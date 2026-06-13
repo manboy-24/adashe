@@ -138,7 +138,7 @@ public class TontineController {
     }
 
     @GetMapping("/{id}/cotisations/export.csv")
-    @Operation(summary = "Exporter toutes les cotisations en CSV (membres de la tontine)")
+    @Operation(summary = "Exporter toutes les cotisations en CSV (créateur/admin uniquement)")
     public ResponseEntity<byte[]> exportCotisationsCsv(@PathVariable Long id) {
         byte[] csv = tontineService.exportCotisationsCsv(id, securityUtil.getCurrentUserId());
         String filename = "cotisations-tontine-" + id + "-" + LocalDate.now() + ".csv";

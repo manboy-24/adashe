@@ -14,19 +14,22 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class RappelCotisationScheduler {
 
-    private final TontineRepository    tontineRepository;
+    private final TontineRepository       tontineRepository;
     private final MembreTontineRepository membreRepository;
-    private final CotisationRepository cotisationRepository;
-    private final TirageRepository     tirageRepository;
-    private final NotificationService  notificationService;
-    private final SmsAsyncService      smsAsyncService;
+    private final CotisationRepository    cotisationRepository;
+    private final TirageRepository        tirageRepository;
+    private final NotificationService     notificationService;
+    private final NotificationRepository  notificationRepository;
+    private final SmsAsyncService         smsAsyncService;
 
     // ── 1. Rappel J-3 : "Le tirage approche" ─────────────────────────────────
     @Scheduled(cron = "0 0 9 * * ?")
@@ -36,9 +39,13 @@ public class RappelCotisationScheduler {
         LocalDate cible = LocalDate.now().plusDays(3);
         List<Tontine> tontines = tontineRepository.findActivesParProchainCycle(cible);
 
+        LocalDateTime debutJour = LocalDate.now().atStartOfDay();
         for (Tontine tontine : tontines) {
             membreRepository.findByTontineIdAndActifTrue(tontine.getId()).stream()
                 .filter(m -> !aPayeCycle(m, tontine))
+                .filter(m -> !notificationRepository.existsByUtilisateurIdAndReferenceIdAndTypeAndCreatedAtAfter(
+                        m.getUtilisateur().getId(), tontine.getId(),
+                        NotificationType.RAPPEL_COTISATION, debutJour))
                 .forEach(m -> {
                     String msg = "Rappel : votre cotisation de " + tontine.getMontantContribution()
                             + " " + tontine.getDevise() + " est attendue dans 3 jours pour "
@@ -58,9 +65,13 @@ public class RappelCotisationScheduler {
     public void rappelJourJ() {
         List<Tontine> tontines = tontineRepository.findActivesParProchainCycle(LocalDate.now());
 
+        LocalDateTime debutJourJ = LocalDate.now().atStartOfDay();
         for (Tontine tontine : tontines) {
             long nonPayers = membreRepository.findByTontineIdAndActifTrue(tontine.getId()).stream()
                 .filter(m -> !aPayeCycle(m, tontine))
+                .filter(m -> !notificationRepository.existsByUtilisateurIdAndReferenceIdAndTypeAndCreatedAtAfter(
+                        m.getUtilisateur().getId(), tontine.getId(),
+                        NotificationType.RAPPEL_COTISATION, debutJourJ))
                 .peek(m -> {
                     String msg = "Aujourd'hui est le jour de cotisation pour " + tontine.getNom()
                             + ". Montant : " + tontine.getMontantContribution() + " " + tontine.getDevise()
@@ -90,7 +101,7 @@ public class RappelCotisationScheduler {
                 case BIMENSUEL    -> 14;
                 case MENSUEL      -> 30;
             };
-            if (joursRestants != Math.max(1, dureeTotal / 3)) continue;
+            if (joursRestants > Math.max(1, dureeTotal / 3)) continue;
 
             membreRepository.findByTontineIdAndActifTrue(tontine.getId()).stream()
                 .filter(m -> !aPayeCycle(m, tontine))
@@ -123,32 +134,55 @@ public class RappelCotisationScheduler {
             int cycleVise = tirage.getNumeroCycle();
 
             List<MembreTontine> membres = membreRepository.findByTontineIdAndActifTrue(tontine.getId());
+            Set<Long> ayantPaye = cotisationRepository.findMembreIdsAyantPayePourCycle(tontine.getId(), cycleVise);
             for (MembreTontine membre : membres) {
-                boolean aPaye = cotisationRepository
-                        .findByMembreIdAndTontineIdAndNumeroCycle(
-                                membre.getId(), tontine.getId(), cycleVise)
-                        .filter(c -> c.getStatut() == PaiementStatus.PAYE)
-                        .isPresent();
+                boolean aPaye = ayantPaye.contains(membre.getId());
 
                 if (!aPaye) {
                     membre.setNombreRetards(membre.getNombreRetards() + 1);
+
+                    // Blocage automatique à partir de 2 retards
+                    if (membre.getNombreRetards() >= 2
+                            && membre.getStatutMembre() != com.tontine.enums.MembreStatut.BLOQUE) {
+                        membre.setStatutMembre(com.tontine.enums.MembreStatut.BLOQUE);
+                        membre.setActif(false);
+
+                        notificationService.creerNotification(
+                                membre.getUtilisateur(), tontine,
+                                "Compte bloqué",
+                                "Vous avez été bloqué dans la tontine « " + tontine.getNom()
+                                        + " » suite à " + membre.getNombreRetards() + " retards. "
+                                        + "Contactez l'administrateur pour régulariser.",
+                                NotificationType.RETARD_PAIEMENT);
+
+                        notificationService.creerNotification(
+                                tontine.getCreateur(), tontine,
+                                "Membre bloqué automatiquement",
+                                membre.getUtilisateur().getPrenom() + " " + membre.getUtilisateur().getNom()
+                                        + " a été bloqué automatiquement (" + membre.getNombreRetards()
+                                        + " retards) dans " + tontine.getNom() + ".",
+                                NotificationType.RETARD_PAIEMENT);
+
+                        log.info("[Scheduler] Blocage auto: {} dans {} ({} retards)",
+                                membre.getUtilisateur().getTelephone(), tontine.getNom(), membre.getNombreRetards());
+                    } else {
+                        notificationService.creerNotification(
+                                membre.getUtilisateur(), tontine,
+                                "Cotisation en retard",
+                                "Votre cotisation pour " + tontine.getNom()
+                                        + " n'a pas été reçue. Contactez l'administrateur.",
+                                NotificationType.RETARD_PAIEMENT);
+
+                        notificationService.creerNotification(
+                                tontine.getCreateur(), tontine,
+                                "Membre en retard",
+                                membre.getUtilisateur().getPrenom() + " " + membre.getUtilisateur().getNom()
+                                        + " n'a pas cotisé pour le cycle " + cycleVise
+                                        + " de " + tontine.getNom() + ".",
+                                NotificationType.RETARD_PAIEMENT);
+                    }
+
                     membreRepository.save(membre);
-
-                    notificationService.creerNotification(
-                            membre.getUtilisateur(), tontine,
-                            "Cotisation en retard",
-                            "Votre cotisation pour " + tontine.getNom()
-                                    + " n'a pas été reçue. Contactez l'administrateur.",
-                            NotificationType.RETARD_PAIEMENT);
-
-                    notificationService.creerNotification(
-                            tontine.getCreateur(), tontine,
-                            "Membre en retard",
-                            membre.getUtilisateur().getPrenom() + " " + membre.getUtilisateur().getNom()
-                                    + " n'a pas cotisé pour le cycle " + cycleVise
-                                    + " de " + tontine.getNom() + ".",
-                            NotificationType.RETARD_PAIEMENT);
-
                     log.info("[Scheduler] Retard marqué: {} dans {}",
                             membre.getUtilisateur().getTelephone(), tontine.getNom());
                 }

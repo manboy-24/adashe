@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -166,6 +167,22 @@ class RappelCotisationSchedulerTest {
                 eq(utilisateur), eq(tontine), any(), contains("jour(s)"), eq(NotificationType.RAPPEL_COTISATION));
     }
 
+    @Test
+    void alerteDeuxTiersDuCycle_joursRestants_inferieurs_seuil_notifie_aussi() {
+        // Pour MENSUEL (30j) seuil = Math.max(1, 30/3) = 10.
+        // Avec 5 jours restants (< 10) : l'ancienne condition != ne déclenchait pas, la nouvelle <= si.
+        tontine.setDateProchainCycle(LocalDate.now().plusDays(5));
+        when(tontineRepository.findActivesAvecCycleDefini()).thenReturn(List.of(tontine));
+        when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membre));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(100L, 10L, 1))
+                .thenReturn(Optional.empty());
+
+        scheduler.alerteDeuxTiersDuCycle();
+
+        verify(notificationService).creerNotification(
+                eq(utilisateur), eq(tontine), any(), contains("jour(s)"), eq(NotificationType.RAPPEL_COTISATION));
+    }
+
     // ── marquerRetards ────────────────────────────────────────────────────────
 
     @Test
@@ -175,8 +192,7 @@ class RappelCotisationSchedulerTest {
 
         when(tirageRepository.findByDateTirage(any())).thenReturn(List.of(tirage));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membre));
-        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(100L, 10L, 1))
-                .thenReturn(Optional.empty());
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of());
 
         scheduler.marquerRetards();
 
@@ -189,12 +205,10 @@ class RappelCotisationSchedulerTest {
     void marquerRetards_membre_paye_aucun_retard_marque() {
         Tirage tirage = Tirage.builder().id(1L).tontine(tontine).numeroCycle(1)
                 .dateTirage(LocalDate.now().minusDays(1)).build();
-        Cotisation cotisationPayee = Cotisation.builder().statut(PaiementStatus.PAYE).build();
 
         when(tirageRepository.findByDateTirage(any())).thenReturn(List.of(tirage));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membre));
-        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(100L, 10L, 1))
-                .thenReturn(Optional.of(cotisationPayee));
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of(100L));
 
         scheduler.marquerRetards();
 

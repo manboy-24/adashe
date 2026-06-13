@@ -39,6 +39,11 @@ public class Tirage {
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal montantDistribue;
 
+    /** Commission prélevée sur la cagnotte brute (en XAF). */
+    @Column(nullable = false, precision = 15, scale = 2)
+    @Builder.Default
+    private BigDecimal commissionPrelevee = BigDecimal.ZERO;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TirageType methodeTirage;

@@ -16,4 +16,10 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     @Modifying
     @Query("UPDATE Notification n SET n.lue = true WHERE n.utilisateur.id = :userId")
     void marquerToutesLues(@Param("userId") Long userId);
+
+    /** Déduplication : vérifie qu'aucun rappel du même type n'a été envoyé depuis 'apres' pour ce membre/tontine. */
+    boolean existsByUtilisateurIdAndReferenceIdAndTypeAndCreatedAtAfter(
+            Long utilisateurId, Long referenceId,
+            com.tontine.enums.NotificationType type,
+            java.time.LocalDateTime apres);
 }

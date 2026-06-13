@@ -15,6 +15,7 @@ public class TirageResponse {
     private String beneficiaireAvatarId;
     private Integer numeroCycle;
     private BigDecimal montantDistribue;
+    private BigDecimal commissionPrelevee;
     private TirageType methodeTirage;
     private LocalDate dateTirage;
     private Boolean confirme;

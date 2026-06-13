@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.LocalDate;
@@ -94,6 +95,10 @@ public class TontineServiceImpl implements TontineService {
                 .sumMontantPayeGroupByTontineIds(tontineIds).stream()
                 .collect(Collectors.toMap(r -> (Long) r[0], r -> (BigDecimal) r[1]));
 
+        Map<Long, BigDecimal> distribuesParTontine = tirageRepository
+                .sumMontantDistribueGroupByTontineIds(tontineIds).stream()
+                .collect(Collectors.toMap(r -> (Long) r[0], r -> (BigDecimal) r[1]));
+
         Map<Long, List<MembreTontine>> membresParTontine = membreRepository
                 .findByTontineIdInAndStatutMembreNot(tontineIds, MembreStatut.RETIRE).stream()
                 .collect(Collectors.groupingBy(m -> m.getTontine().getId()));
@@ -118,7 +123,7 @@ public class TontineServiceImpl implements TontineService {
         final Long finalCurrentUserId = currentUserId;
 
         return tontines.stream()
-                .map(t -> toResponseBatch(t, totauxParTontine, membresParTontine, totauxParMembre, payesParTontine, finalCurrentUserId))
+                .map(t -> toResponseBatch(t, totauxParTontine, distribuesParTontine, membresParTontine, totauxParMembre, payesParTontine, finalCurrentUserId))
                 .collect(Collectors.toList());
     }
 
@@ -197,6 +202,10 @@ public class TontineServiceImpl implements TontineService {
     public ApiResponse<String> rejoindreParCode(String code, Long userId) {
         Tontine tontine = tontineRepository.findByCodeInvitation(code)
                 .orElseThrow(() -> new ResourceNotFoundException("Code d'invitation invalide"));
+
+        if (tontine.getStatut() == com.tontine.enums.TontineStatus.TERMINEE) {
+            throw new BadRequestException("Impossible de rejoindre une tontine terminée");
+        }
 
         if (membreRepository.existsByUtilisateurIdAndTontineId(userId, tontine.getId())) {
             throw new BadRequestException("Vous êtes déjà membre de cette tontine");
@@ -549,13 +558,14 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Un tirage a déjà été effectué pour ce cycle");
         }
 
-        // Vérifier que tous les membres actifs ont cotisé pour ce cycle
-        List<MembreTontine> membresActifs = membreRepository.findByTontineIdAndActifTrue(tontineId);
+        // Vérifier que tous les membres non-bloqués ont cotisé pour ce cycle
+        List<MembreTontine> membresActifs = membreRepository.findByTontineIdAndActifTrue(tontineId)
+                .stream()
+                .filter(m -> m.getStatutMembre() != MembreStatut.BLOQUE)
+                .collect(Collectors.toList());
+        Set<Long> ayantPaye = cotisationRepository.findMembreIdsAyantPayePourCycle(tontineId, tontine.getCycleActuel());
         long nonPayes = membresActifs.stream()
-                .filter(m -> !cotisationRepository
-                        .findByMembreIdAndTontineIdAndNumeroCycle(m.getId(), tontineId, tontine.getCycleActuel())
-                        .filter(c -> c.getStatut() == PaiementStatus.PAYE)
-                        .isPresent())
+                .filter(m -> !ayantPaye.contains(m.getId()))
                 .count();
         if (nonPayes > 0) {
             throw new BadRequestException(nonPayes + " membre(s) n'ont pas encore cotisé pour ce cycle");
@@ -563,8 +573,12 @@ public class TontineServiceImpl implements TontineService {
 
         Utilisateur admin = utilisateurRepository.findById(userId).orElseThrow();
         MembreTontine beneficiaire = choisirBeneficiaire(tontine, request);
-        BigDecimal cagnotte = tontine.getMontantContribution()
+        BigDecimal brut = tontine.getMontantContribution()
                 .multiply(BigDecimal.valueOf(tontine.getNombreMembresActifs()));
+        BigDecimal commission = brut
+                .multiply(BigDecimal.valueOf(tontine.getCommissionPourcent()))
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal cagnotte = brut.subtract(commission);
 
         // Le tirage est créé en attente de validation admin (confirme = false).
         // Le cycle n'avance et les notifications ne partent qu'à la confirmation.
@@ -574,6 +588,7 @@ public class TontineServiceImpl implements TontineService {
                 .effectuePar(admin)
                 .numeroCycle(tontine.getCycleActuel())
                 .montantDistribue(cagnotte)
+                .commissionPrelevee(commission)
                 .methodeTirage(tontine.getTypeTirage())
                 .dateTirage(LocalDate.now())
                 .confirme(false)
@@ -676,14 +691,16 @@ public class TontineServiceImpl implements TontineService {
 
         int retards = membres.stream().mapToInt(MembreTontine::getNombreRetards).sum();
         int totalPossible = membres.size() * Math.max(1, tontine.getCycleActuel() - 1);
-        double tauxPonctualite = totalPossible == 0 ? 100.0 : (1 - (double) retards / totalPossible) * 100;
+        double tauxPonctualite = totalPossible == 0 ? 100.0 : Math.max(0.0, (1 - (double) retards / totalPossible) * 100);
 
         return StatistiquesResponse.builder()
                 .tontineId(tontineId)
                 .tontineNom(tontine.getNom())
                 .totalCollecte(totalCollecte)
                 .totalDistribue(totalDistribue)
-                .nombreCyclesCompletes(tontine.getCycleActuel() - 1)
+                .nombreCyclesCompletes(tontine.getStatut() == com.tontine.enums.TontineStatus.TERMINEE
+                        ? tontine.getCycleActuel()
+                        : Math.max(0, tontine.getCycleActuel() - 1))
                 .nombreMembresActifs(membres.size())
                 .nombrePaiementsEnRetard(retards)
                 .tauxPonctualite(Math.round(tauxPonctualite * 10.0) / 10.0)
@@ -773,12 +790,14 @@ public class TontineServiceImpl implements TontineService {
     private TontineResponse toResponseBatch(
             Tontine t,
             Map<Long, BigDecimal> totauxParTontine,
+            Map<Long, BigDecimal> distribuesParTontine,
             Map<Long, List<MembreTontine>> membresParTontine,
             Map<Long, BigDecimal> totauxParMembre,
             Map<Long, Set<Long>> payesParTontine,
             Long currentUserId) {
 
-        BigDecimal total = totauxParTontine.getOrDefault(t.getId(), BigDecimal.ZERO);
+        BigDecimal total     = totauxParTontine.getOrDefault(t.getId(), BigDecimal.ZERO);
+        BigDecimal distribue = distribuesParTontine.getOrDefault(t.getId(), BigDecimal.ZERO);
         List<MembreTontine> membresRaw = membresParTontine.getOrDefault(t.getId(), Collections.emptyList());
         Set<Long> payesCeCycle = payesParTontine.getOrDefault(t.getId(), Collections.emptySet());
 
@@ -800,6 +819,7 @@ public class TontineServiceImpl implements TontineService {
                 .cycleActuel(t.getCycleActuel()).nombreMaxMembres(t.getNombreMaxMembres())
                 .codeInvitation(estCreateur ? t.getCodeInvitation() : null)
                 .totalCollecte(total)
+                .totalDistribue(distribue)
                 .estCreateur(estCreateur)
                 .nombreMembresActifs((int) membres.stream().filter(m -> Boolean.TRUE.equals(m.getActif())).count())
                 .commissionPourcent(t.getCommissionPourcent())
@@ -850,6 +870,7 @@ public class TontineServiceImpl implements TontineService {
                 .anyMatch(m -> m.getUtilisateur().getId().equals(uid)
                         && m.getRoleMembreTontine() == MembreTontineRole.CREATEUR);
 
+        BigDecimal distribue = tirageRepository.sumMontantDistribueByTontineId(t.getId());
         return TontineResponse.builder()
                 .id(t.getId()).nom(t.getNom()).description(t.getDescription())
                 .montantContribution(t.getMontantContribution()).devise(t.getDevise())
@@ -859,6 +880,7 @@ public class TontineServiceImpl implements TontineService {
                 .cycleActuel(t.getCycleActuel()).nombreMaxMembres(t.getNombreMaxMembres())
                 .codeInvitation(estCreateur ? t.getCodeInvitation() : null)
                 .totalCollecte(total)
+                .totalDistribue(distribue)
                 .estCreateur(estCreateur)
                 .nombreMembresActifs((int) membres.stream().filter(m -> Boolean.TRUE.equals(m.getActif())).count())
                 .commissionPourcent(t.getCommissionPourcent())
@@ -914,6 +936,7 @@ public class TontineServiceImpl implements TontineService {
                 .beneficiaireNom(t.getBeneficiaire().getUtilisateur().getPrenom() + " " + t.getBeneficiaire().getUtilisateur().getNom())
                 .beneficiaireAvatarId(t.getBeneficiaire().getUtilisateur().getAvatarId())
                 .numeroCycle(t.getNumeroCycle()).montantDistribue(t.getMontantDistribue())
+                .commissionPrelevee(t.getCommissionPrelevee() != null ? t.getCommissionPrelevee() : BigDecimal.ZERO)
                 .methodeTirage(t.getMethodeTirage()).dateTirage(t.getDateTirage())
                 .confirme(t.getConfirme()).createdAt(t.getCreatedAt()).build();
     }
@@ -945,6 +968,14 @@ public class TontineServiceImpl implements TontineService {
                 ? Collections.emptyMap()
                 : membreRepository.countActifGroupByTontineIds(actifsTontineIds).stream()
                         .collect(Collectors.toMap(r -> (Long) r[0], r -> (Long) r[1]));
+
+        // Total membres dans toutes les tontines dont l'utilisateur est admin
+        long totalMembres = actifs.stream()
+                .filter(m -> m.getTontine().getCreateur().getId().equals(userId))
+                .map(m -> m.getTontine().getId())
+                .distinct()
+                .mapToLong(id -> nbMembresParTontine.getOrDefault(id, 0L))
+                .sum();
 
         // Prochain tirage : tontine active avec la date de prochain cycle la plus proche
         DashboardResponse.ProchainTirageInfo prochainTirage = actifs.stream()
@@ -992,6 +1023,7 @@ public class TontineServiceImpl implements TontineService {
                 .tontinesOuJeSuisCreateur(jeCreateur)
                 .totalCotise(totalCotise)
                 .mesRetardsTotaux(retardsTotaux)
+                .totalMembres(totalMembres)
                 .prochainTirage(prochainTirage)
                 .cotisationsEnAttente(dues)
                 .build();
@@ -1002,7 +1034,7 @@ public class TontineServiceImpl implements TontineService {
     @Override
     @Transactional(readOnly = true)
     public byte[] exportCotisationsCsv(Long tontineId, Long userId) {
-        verifierAccesTontine(tontineId, userId);
+        verifierEstAdmin(tontineId, userId);
 
         Tontine tontine = tontineRepository.findById(tontineId)
                 .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));

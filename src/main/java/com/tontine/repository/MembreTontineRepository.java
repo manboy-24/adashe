@@ -35,4 +35,8 @@ public interface MembreTontineRepository extends JpaRepository<MembreTontine, Lo
 
     @Query("SELECT m.tontine.id, COUNT(m) FROM MembreTontine m WHERE m.tontine.id IN :ids AND m.actif = true GROUP BY m.tontine.id")
     List<Object[]> countActifGroupByTontineIds(@Param("ids") List<Long> ids);
+
+    /** Invitations EN_ATTENTE non acceptées dans le délai imparti. */
+    @Query("SELECT m FROM MembreTontine m WHERE m.statutMembre = 'EN_ATTENTE' AND m.dateAdhesion < :limite")
+    List<MembreTontine> findInvitationsExpirees(@Param("limite") java.time.LocalDateTime limite);
 }

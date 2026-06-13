@@ -2,6 +2,7 @@ package com.tontine.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tontine.dto.request.TontineRequest;
+import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.DashboardResponse;
 import com.tontine.dto.response.TontineResponse;
 import com.tontine.enums.FrequenceType;
@@ -9,6 +10,7 @@ import com.tontine.enums.TirageType;
 import com.tontine.enums.TontineStatus;
 import com.tontine.security.JwtAuthFilter;
 import com.tontine.security.JwtService;
+import com.tontine.service.RateLimitService;
 import com.tontine.service.TontineService;
 import com.tontine.util.SecurityUtil;
 import jakarta.servlet.FilterChain;
@@ -48,6 +50,7 @@ class TontineControllerTest {
     @MockBean private JwtService jwtService;
     @MockBean private UserDetailsService userDetailsService;
     @MockBean private JwtAuthFilter jwtAuthFilter;
+    @MockBean private RateLimitService rateLimitService;
 
     private TontineResponse tontineResponse;
 
@@ -252,5 +255,51 @@ class TontineControllerTest {
                         .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statut").value("ACTIVE"));
+    }
+
+    // ── POST /tontines/rejoindre/{code} ───────────────────────────────────────
+
+    @Test
+    void rejoindreParCode_sans_jwt_retourne_403() throws Exception {
+        mockMvc.perform(post("/tontines/rejoindre/ABCD1234"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser
+    void rejoindreParCode_avec_jwt_retourne_200() throws Exception {
+        when(securityUtil.getCurrentUserId()).thenReturn(1L);
+        when(tontineService.rejoindreParCode("ABCD1234", 1L))
+                .thenReturn(ApiResponse.success(null, "Vous avez rejoint la tontine"));
+
+        mockMvc.perform(post("/tontines/rejoindre/ABCD1234")
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Vous avez rejoint la tontine"));
+    }
+
+    // ── POST /tontines/{id}/terminer ──────────────────────────────────────────
+
+    @Test
+    void terminerTontine_sans_jwt_retourne_403() throws Exception {
+        mockMvc.perform(post("/tontines/10/terminer"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser
+    void terminerTontine_avec_jwt_retourne_200() throws Exception {
+        TontineResponse terminee = TontineResponse.builder()
+                .id(10L).nom("Ma Tontine")
+                .statut(TontineStatus.TERMINEE)
+                .membres(Collections.emptyList()).build();
+
+        when(securityUtil.getCurrentUserId()).thenReturn(1L);
+        when(tontineService.terminerTontine(10L, 1L)).thenReturn(terminee);
+
+        mockMvc.perform(post("/tontines/10/terminer")
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statut").value("TERMINEE"));
     }
 }

@@ -23,6 +23,7 @@ public class TontineResponse {
     private Integer nombreMaxMembres;
     private String codeInvitation;  // null si non-créateur
     private BigDecimal totalCollecte;
+    private BigDecimal totalDistribue;
     private Integer nombreMembresActifs;
     private Boolean estCreateur;    // true si l'utilisateur courant est le créateur
     private Float commissionPourcent;

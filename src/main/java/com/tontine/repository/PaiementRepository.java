@@ -29,6 +29,9 @@ public interface PaiementRepository extends JpaRepository<Paiement, Long> {
     /** Vérifie qu'un paiement EN_ATTENTE n'existe pas déjà pour ce membre (anti-doublon). */
     boolean existsByMembreIdAndStatut(Long membreId, PaiementStatus statut);
 
+    /** Paiements EN_ATTENTE créés avant une date limite (pour expiration automatique). */
+    List<Paiement> findByStatutAndCreatedAtBefore(PaiementStatus statut, java.time.LocalDateTime limit);
+
     /** Tous les paiements d'un utilisateur, toutes tontines confondues. */
     @Query("SELECT p FROM Paiement p JOIN FETCH p.membre m JOIN FETCH m.utilisateur u WHERE u.id = :userId ORDER BY p.createdAt DESC")
     List<Paiement> findByUtilisateurIdOrderByCreatedAtDesc(@Param("userId") Long userId);

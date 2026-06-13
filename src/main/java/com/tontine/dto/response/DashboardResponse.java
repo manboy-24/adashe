@@ -13,6 +13,8 @@ public class DashboardResponse {
     private int tontinesOuJeSuisCreateur;
     private BigDecimal totalCotise;
     private int mesRetardsTotaux;
+    /** Somme des membres actifs dans toutes les tontines dont l'utilisateur est admin. */
+    private long totalMembres;
 
     /** Prochaine échéance de tirage parmi les tontines actives de l'utilisateur. */
     private ProchainTirageInfo prochainTirage;

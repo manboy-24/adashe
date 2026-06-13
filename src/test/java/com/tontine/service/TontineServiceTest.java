@@ -8,8 +8,10 @@ import com.tontine.dto.response.TirageResponse;
 import com.tontine.dto.response.TontineResponse;
 import com.tontine.entity.*;
 import com.tontine.enums.*;
+import com.tontine.dto.response.ApiResponse;
 import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ForbiddenException;
+import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.*;
 import com.tontine.service.EmailAsyncService;
 import com.tontine.service.NotificationService;
@@ -148,6 +150,7 @@ class TontineServiceTest {
                 .id(101L).utilisateur(createur).tontine(tontine)
                 .roleMembreTontine(MembreTontineRole.MEMBRE)
                 .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        tontine.setNumeroMtnMomo("699000000");
         tontine.getMembres().add(membreCreateur);
         tontine.getMembres().add(m2);
 
@@ -226,26 +229,25 @@ class TontineServiceTest {
         TirageRequest request = new TirageRequest();
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(false);
         when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
         when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of(beneficiaire));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur, beneficiaire));
-        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
-                .thenReturn(Optional.empty());
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of(100L, 101L));
         when(tirageRepository.save(any())).thenAnswer(inv -> {
             Tirage t = inv.getArgument(0);
             t.setId(50L);
             return t;
         });
         when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(tontineRepository.save(any())).thenReturn(tontine);
 
         TirageResponse response = tontineService.effectuerTirage(10L, request, 1L);
 
         assertThat(response).isNotNull();
         assertThat(response.getBeneficiaireId()).isEqualTo(101L);
-        verify(tirageRepository).save(any());
-        verify(notificationService, atLeastOnce()).creerNotification(any(), any(), any(), any(), any());
+        // Le tirage est créé en état "en attente" (confirme=false) : ni notifications ni email à ce stade
+        verify(tirageRepository).save(argThat(t -> !Boolean.TRUE.equals(t.getConfirme())));
     }
 
     @Test
@@ -253,6 +255,7 @@ class TontineServiceTest {
         tontine.setStatut(TontineStatus.ACTIVE);
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(true);
 
         assertThatThrownBy(() -> tontineService.effectuerTirage(10L, new TirageRequest(), 1L))
@@ -286,20 +289,41 @@ class TontineServiceTest {
                 .aCagnotteSurCycleActuel(false).nombreRetards(0).build();
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(false);
         when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
         when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of(beneficiaire));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(beneficiaire));
-        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
-                .thenReturn(Optional.empty());
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of(101L));
         when(tirageRepository.save(any())).thenAnswer(inv -> { Tirage t = inv.getArgument(0); t.setId(50L); return t; });
         when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(tontineRepository.save(any())).thenReturn(tontine);
 
         tontineService.effectuerTirage(10L, new TirageRequest(), 1L);
 
-        verify(emailAsyncService).envoyerEmailAsync(
-                eq("alice@test.cm"), contains("cagnotte"), anyString());
+        // Email envoyé uniquement à la confirmation (confirmerTirage), pas ici
+        verify(tirageRepository).save(argThat(t -> !Boolean.TRUE.equals(t.getConfirme())));
+    }
+
+    @Test
+    void effectuerTirage_leve_exception_si_un_membre_non_paye() {
+        tontine.setStatut(TontineStatus.ACTIVE);
+
+        Utilisateur u2 = Utilisateur.builder()
+                .id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine m2 = MembreTontine.builder()
+                .id(101L).utilisateur(u2).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(false);
+        when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur, m2));
+        // Seul membreCreateur (100) a payé ; m2 (101) n'a pas payé
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of(100L));
+
+        assertThatThrownBy(() -> tontineService.effectuerTirage(10L, new TirageRequest(), 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("1 membre(s)");
     }
 
     // ── enregistrerCotisation ─────────────────────────────────────────────────
@@ -430,6 +454,7 @@ class TontineServiceTest {
         tontine.getMembres().add(membreCreateur);
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(cotisationRepository.sumMontantPayeByTontineId(10L)).thenReturn(new BigDecimal("10000"));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur));
         when(cotisationRepository.sumMontantPayeByMembreId(100L)).thenReturn(new BigDecimal("10000"));
@@ -461,8 +486,10 @@ class TontineServiceTest {
                 .thenReturn(List.of(membreCreateur));
         when(cotisationRepository.sumMontantPayeGroupByMembreIds(List.of(100L)))
                 .thenReturn(totauxMembre);
-        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1))
-                .thenReturn(Set.of(100L));
+        List<Object[]> cyclesPayes = new ArrayList<>();
+        cyclesPayes.add(new Object[]{10L, 100L});
+        when(cotisationRepository.findMembreIdsAyantPayePourCyclesActuels(List.of(10L)))
+                .thenReturn(cyclesPayes);
         when(securityUtil.getCurrentUserId()).thenReturn(1L);
 
         List<TontineResponse> result = tontineService.getMesTontines(1L,
@@ -609,6 +636,104 @@ class TontineServiceTest {
                 .isInstanceOf(BadRequestException.class);
     }
 
+    // ── rejoindreParCode ──────────────────────────────────────────────────────
+
+    @Test
+    void rejoindreParCode_succes_ajoute_et_active_membre() {
+        Utilisateur user2 = Utilisateur.builder()
+                .id(2L).nom("Martin").prenom("Paul").telephone("699000002").build();
+        MembreTontine invite = MembreTontine.builder()
+                .id(201L).utilisateur(user2).tontine(tontine)
+                .roleMembreTontine(MembreTontineRole.MEMBRE)
+                .statutMembre(MembreStatut.EN_ATTENTE).actif(false).build();
+
+        when(tontineRepository.findByCodeInvitation("ABCD1234")).thenReturn(Optional.of(tontine));
+        when(membreRepository.existsByUtilisateurIdAndTontineId(2L, 10L)).thenReturn(false);
+        // verifierEstAdmin dans ajouterMembre (adminId = createur.getId() = 1L)
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(utilisateurRepository.findById(2L)).thenReturn(Optional.of(user2));
+        // 1re invocation (ajouterMembre) : absent ; 2e (accepterInvitation) : EN_ATTENTE
+        when(membreRepository.findByUtilisateurIdAndTontineId(2L, 10L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(invite));
+        when(membreRepository.findByTontineId(10L)).thenReturn(Collections.emptyList());
+        when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ApiResponse<String> result = tontineService.rejoindreParCode("ABCD1234", 2L);
+
+        assertThat(result.getMessage()).contains("rejoint");
+        assertThat(invite.getStatutMembre()).isEqualTo(MembreStatut.ACTIF);
+        assertThat(invite.getActif()).isTrue();
+    }
+
+    @Test
+    void rejoindreParCode_tontine_terminee_leve_exception() {
+        tontine.setStatut(TontineStatus.TERMINEE);
+        when(tontineRepository.findByCodeInvitation("ABCD1234")).thenReturn(Optional.of(tontine));
+
+        assertThatThrownBy(() -> tontineService.rejoindreParCode("ABCD1234", 2L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("terminée");
+    }
+
+    @Test
+    void rejoindreParCode_code_invalide_leve_exception() {
+        when(tontineRepository.findByCodeInvitation("BADCODE")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> tontineService.rejoindreParCode("BADCODE", 2L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void rejoindreParCode_deja_membre_leve_exception() {
+        when(tontineRepository.findByCodeInvitation("ABCD1234")).thenReturn(Optional.of(tontine));
+        when(membreRepository.existsByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(true);
+
+        assertThatThrownBy(() -> tontineService.rejoindreParCode("ABCD1234", 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("déjà membre");
+    }
+
+    // ── terminerTontine ───────────────────────────────────────────────────────
+
+    @Test
+    void terminerTontine_succes_passe_a_terminee() {
+        tontine.setStatut(TontineStatus.ACTIVE);
+
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(tontineRepository.save(any())).thenReturn(tontine);
+        when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur));
+        when(cotisationRepository.sumMontantPayeByTontineId(anyLong())).thenReturn(null);
+        when(membreRepository.findByTontineIdAndStatutMembreNot(anyLong(), any())).thenReturn(List.of(membreCreateur));
+
+        TontineResponse response = tontineService.terminerTontine(10L, 1L);
+
+        assertThat(response).isNotNull();
+        assertThat(tontine.getStatut()).isEqualTo(TontineStatus.TERMINEE);
+        verify(tontineRepository).save(tontine);
+        verify(notificationService, atLeastOnce()).creerNotification(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void terminerTontine_non_createur_leve_exception() {
+        tontine.setStatut(TontineStatus.ACTIVE);
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+
+        assertThatThrownBy(() -> tontineService.terminerTontine(10L, 2L))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void terminerTontine_non_active_leve_exception() {
+        // tontine est EN_ATTENTE par défaut dans setUp
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+
+        assertThatThrownBy(() -> tontineService.terminerTontine(10L, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("ACTIVE");
+    }
+
     // ── effectuerTirage ROTATIF / MANUEL ──────────────────────────────────────
 
     @Test
@@ -626,15 +751,14 @@ class TontineServiceTest {
         membreCreateur.setOrdreTour(2);
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(false);
         when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
         when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of(m2, membreCreateur));
         when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur, m2));
-        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
-                .thenReturn(Optional.empty());
+        when(cotisationRepository.findMembreIdsAyantPayePourCycle(10L, 1)).thenReturn(Set.of(100L, 101L));
         when(tirageRepository.save(any())).thenAnswer(inv -> { Tirage t = inv.getArgument(0); t.setId(50L); return t; });
         when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(tontineRepository.save(any())).thenReturn(tontine);
 
         TirageResponse response = tontineService.effectuerTirage(10L, new TirageRequest(), 1L);
 
@@ -657,6 +781,7 @@ class TontineServiceTest {
         // beneficiaireId absent
 
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
         when(tirageRepository.existsByTontineIdAndNumeroCycle(10L, 1)).thenReturn(false);
         when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
         when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of(m2));

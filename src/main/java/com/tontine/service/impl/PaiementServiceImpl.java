@@ -435,6 +435,7 @@ public class PaiementServiceImpl implements PaiementService {
                     );
                 }
             } else {
+                // Notifier le membre : sa cotisation est confirmée
                 notificationService.creerNotification(
                         paiement.getMembre().getUtilisateur(),
                         paiement.getMembre().getTontine(),
@@ -442,6 +443,19 @@ public class PaiementServiceImpl implements PaiementService {
                         "Votre cotisation de " + paiement.getMontant() + " XAF a été confirmée.",
                         com.tontine.enums.NotificationType.PAIEMENT_RECU
                 );
+                // Notifier le créateur de la tontine (si différent du membre)
+                Utilisateur createur = paiement.getMembre().getTontine().getCreateur();
+                if (createur != null && !createur.getId().equals(paiement.getMembre().getUtilisateur().getId())) {
+                    notificationService.creerNotification(
+                            createur,
+                            paiement.getMembre().getTontine(),
+                            "💰 Cotisation reçue",
+                            paiement.getMembre().getUtilisateur().getPrenom() + " "
+                                    + paiement.getMembre().getUtilisateur().getNom()
+                                    + " a payé " + paiement.getMontant() + " XAF via Mobile Money.",
+                            com.tontine.enums.NotificationType.PAIEMENT_RECU
+                    );
+                }
             }
 
             log.info("Cotisation enregistrée après paiement Monetbil: ref={}", reference);

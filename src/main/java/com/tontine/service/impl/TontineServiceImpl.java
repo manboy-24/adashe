@@ -777,11 +777,20 @@ public class TontineServiceImpl implements TontineService {
     private void notifierTirage(Tontine tontine, MembreTontine beneficiaire, BigDecimal cagnotte) {
         membreRepository.findByTontineIdAndActifTrue(tontine.getId()).forEach(m -> {
             boolean estBenef = m.getId().equals(beneficiaire.getId());
-            notificationService.creerNotification(m.getUtilisateur(), tontine,
-                    estBenef ? "🎉 Vous recevez la cagnotte !" : "Tirage effectué",
-                    (estBenef ? "Félicitations ! Vous recevrez " : beneficiaire.getUtilisateur().getPrenom() + " reçoit ")
-                            + cagnotte + " " + tontine.getDevise(),
-                    NotificationType.TIRAGE_EFFECTUE);
+            if (estBenef) {
+                notificationService.creerNotification(m.getUtilisateur(), tontine,
+                        "🎉 C'est votre tour !",
+                        "Félicitations ! Vous recevrez " + cagnotte + " " + tontine.getDevise()
+                                + " pour la tontine « " + tontine.getNom() + " ».",
+                        NotificationType.TIRAGE_BENEFICIAIRE);
+            } else {
+                notificationService.creerNotification(m.getUtilisateur(), tontine,
+                        "🎲 Tirage effectué — " + tontine.getNom(),
+                        beneficiaire.getUtilisateur().getPrenom() + " " + beneficiaire.getUtilisateur().getNom()
+                                + " a été désigné(e) bénéficiaire et recevra "
+                                + cagnotte + " " + tontine.getDevise() + ".",
+                        NotificationType.TIRAGE_EFFECTUE);
+            }
         });
     }
 

@@ -175,8 +175,8 @@ public class NotificationServiceImpl implements NotificationService {
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setTo(email);
-            msg.setSubject("[AdasheCash] " + sujet);
-            msg.setText(corps + "\n\n--\nL'équipe AdasheCash");
+            msg.setSubject("[Adashe] " + sujet);
+            msg.setText(corps + "\n\n--\nL'équipe Adashe");
             mailSender.send(msg);
             log.info("[EMAIL] Envoyé à {}", email);
         } catch (Exception e) {

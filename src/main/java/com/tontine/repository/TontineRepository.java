@@ -34,4 +34,8 @@ public interface TontineRepository extends JpaRepository<Tontine, Long> {
     /** Scheduler : toutes les tontines actives avec un prochain cycle défini. */
     @Query("SELECT t FROM Tontine t WHERE t.statut = com.tontine.enums.TontineStatus.ACTIVE AND t.dateProchainCycle IS NOT NULL")
     List<Tontine> findActivesAvecCycleDefini();
+
+    /** Scheduler rappel hebdo : toutes les tontines actives. */
+    @Query("SELECT t FROM Tontine t WHERE t.statut = com.tontine.enums.TontineStatus.ACTIVE")
+    List<Tontine> findToutesActives();
 }

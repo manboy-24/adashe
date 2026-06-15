@@ -9,6 +9,8 @@ import com.tontine.repository.*;
 import com.tontine.service.EmailAsyncService;
 import com.tontine.service.NotificationService;
 import com.tontine.service.TontineService;
+import com.tontine.websocket.TirageWebSocketHandler;
+import com.tontine.websocket.TirageWsEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -42,6 +44,7 @@ public class TontineServiceImpl implements TontineService {
     private final NotificationService notificationService;
     private final EmailAsyncService emailAsyncService;
     private final com.tontine.util.SecurityUtil securityUtil;
+    private final TirageWebSocketHandler tirageWsHandler;
 
     // ── Création ─────────────────────────────────────────────────────────────
 
@@ -599,7 +602,10 @@ public class TontineServiceImpl implements TontineService {
         beneficiaire.setACagnotteSurCycleActuel(true);
         membreRepository.save(beneficiaire);
 
-        return toTirageResponse(tirage);
+        TirageResponse response = toTirageResponse(tirage);
+        // Notifier les membres en temps réel — la roue commence à tourner sur leurs écrans
+        tirageWsHandler.broadcast(tontineId, new TirageWsEvent("TIRAGE_LANCE", response));
+        return response;
     }
 
     @Override
@@ -647,8 +653,12 @@ public class TontineServiceImpl implements TontineService {
             emailAsyncService.envoyerEmailAsync(emailBenef, sujet, corps);
         }
 
+        TirageResponse confirmed = toTirageResponse(tirage);
+        // Notifier les membres que le tirage est validé (cycle avancé)
+        tirageWsHandler.broadcast(tontineId, new TirageWsEvent("TIRAGE_CONFIRME", confirmed));
+
         log.info("Tirage {} confirmé pour tontine {} par adminId={}", tirageId, tontineId, adminId);
-        return toTirageResponse(tirage);
+        return confirmed;
     }
 
     @Override

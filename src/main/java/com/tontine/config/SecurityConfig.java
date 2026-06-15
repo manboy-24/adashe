@@ -43,7 +43,8 @@ public class SecurityConfig {
             "/paiements/webhook/**",
             "/dons/webhook/**",
             "/actuator/health",
-            "/actuator/info"
+            "/actuator/info",
+            "/ws/**"          // JWT validé dans JwtHandshakeInterceptor, pas ici
     };
 
     @Bean

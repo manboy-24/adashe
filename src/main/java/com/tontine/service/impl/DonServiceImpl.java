@@ -4,14 +4,18 @@ import com.tontine.dto.request.DonRequest;
 import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.DonResponse;
 import com.tontine.entity.Don;
+import com.tontine.entity.Tirage;
 import com.tontine.entity.Utilisateur;
+import com.tontine.enums.NotificationType;
 import com.tontine.enums.PaiementMode;
 import com.tontine.enums.PaiementStatus;
 import com.tontine.exception.BadRequestException;
 import com.tontine.gateway.MonetbilGateway;
 import com.tontine.repository.DonRepository;
+import com.tontine.repository.TirageRepository;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.service.DonService;
+import com.tontine.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +39,8 @@ public class DonServiceImpl implements DonService {
 
     private final DonRepository         donRepository;
     private final UtilisateurRepository utilisateurRepository;
+    private final TirageRepository      tirageRepository;
+    private final NotificationService   notificationService;
     private final MonetbilGateway       monetbilGateway;
 
     @Value("${monetbil.service-key}")
@@ -77,6 +83,10 @@ public class DonServiceImpl implements DonService {
 
         BigDecimal montant = BigDecimal.valueOf(request.getMontant());
 
+        Tirage tirage = (request.getTirageId() != null)
+                ? tirageRepository.findById(request.getTirageId()).orElse(null)
+                : null;
+
         Don don = Don.builder()
                 .utilisateur(utilisateur)
                 .montant(montant)
@@ -84,6 +94,7 @@ public class DonServiceImpl implements DonService {
                 .statut(PaiementStatus.EN_ATTENTE)
                 .referenceTransaction(reference)
                 .numeroPaieur(numeroReception)
+                .tirage(tirage)
                 .build();
         don = donRepository.save(don);
 
@@ -158,6 +169,14 @@ public class DonServiceImpl implements DonService {
                 don.setStatut(PaiementStatus.PAYE);
                 don.setMessageOperateur(params.getOrDefault("message", "Paiement confirmé"));
                 log.info("Don {} confirmé — merci !", don.getReferenceTransaction());
+                // Notification de remerciement au donateur
+                notificationService.creerNotification(
+                        don.getUtilisateur(),
+                        null,
+                        "💝 Merci pour votre don !",
+                        "Votre don de " + don.getMontant().longValue() + " FCFA a bien été reçu. Merci pour votre générosité !",
+                        NotificationType.DON_CONFIRME
+                );
             }
             case "FAILED", "CANCELLED" -> {
                 don.setStatut(PaiementStatus.ANNULE);

@@ -54,6 +54,11 @@ public class Don {
     @Column(name = "gateway_payment_url")
     private String gatewayPaymentUrl;     // widget_url Monetbil
 
+    /** Tirage qui a motivé ce don — null si don spontané. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tirage_id")
+    private Tirage tirage;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

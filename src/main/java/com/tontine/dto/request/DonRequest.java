@@ -14,4 +14,7 @@ public class DonRequest {
     @NotNull(message = "Le montant est requis")
     @Min(value = 100, message = "Le montant minimum est de 100 FCFA")
     private Integer montant;
+
+    /** Optionnel — tirage qui a déclenché l'invitation au don. */
+    private Long tirageId;
 }

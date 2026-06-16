@@ -53,6 +53,13 @@ public class TontineServiceImpl implements TontineService {
         Utilisateur createur = utilisateurRepository.findById(createurId)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
+        // Garde-fou défense-en-profondeur : le client mobile vérifie déjà ce flag
+        // (UtilisateurResponse.contratAdminAccepte) avant même d'afficher le
+        // formulaire de création, mais on le revérifie ici au cas où.
+        if (!com.tontine.util.ContratAdminVersion.estAcceptee(createur.getContratAdminVersion())) {
+            throw new ForbiddenException("Vous devez accepter les conditions administrateur avant de créer une tontine");
+        }
+
         Tontine tontine = Tontine.builder()
                 .nom(request.getNom())
                 .description(request.getDescription())

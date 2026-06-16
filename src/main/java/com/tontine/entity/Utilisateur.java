@@ -85,6 +85,11 @@ public class Utilisateur {
     // ── Avatar (ID du drawable partagé avec l'app mobile) ───────────────────
     private String avatarId;
 
+    // ── Contrat admin (conditions de commission/amende, accepté avant de créer
+    //    une tontine) — null = jamais accepté. Comparé à ContratAdminVersion.ACTUELLE.
+    private Integer contratAdminVersion;
+    private LocalDateTime contratAdminAccepteLe;
+
     // ── Firebase Cloud Messaging ─────────────────────────────────────────────
     @JsonIgnore
     private String fcmToken;

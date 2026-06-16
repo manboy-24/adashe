@@ -59,7 +59,9 @@ class TontineServiceTest {
         createur = Utilisateur.builder()
                 .id(1L).nom("Dupont").prenom("Jean")
                 .telephone("699000001").email("jean@test.cm")
-                .role(Role.USER).build();
+                .role(Role.USER)
+                .contratAdminVersion(com.tontine.util.ContratAdminVersion.ACTUELLE)
+                .build();
 
         tontine = Tontine.builder()
                 .id(10L).nom("Ma Tontine")
@@ -139,6 +141,26 @@ class TontineServiceTest {
         tontineService.creerTontine(request, 1L);
 
         verify(membreRepository).save(argThat(m -> m.getOrdreTour() == null));
+    }
+
+    @Test
+    void creerTontine_contrat_admin_non_accepte_leve_exception() {
+        createur.setContratAdminVersion(null);   // jamais accepté
+
+        TontineRequest request = new TontineRequest();
+        request.setNom("Ma Tontine");
+        request.setMontantContribution(new BigDecimal("5000"));
+        request.setFrequence(FrequenceType.MENSUEL);
+        request.setTypeTirage(TirageType.RANDOM);
+        request.setDateDebut(LocalDate.now().plusDays(7));
+
+        when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
+
+        assertThatThrownBy(() -> tontineService.creerTontine(request, 1L))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("conditions administrateur");
+
+        verify(tontineRepository, never()).save(any());
     }
 
     // ── demarrerTontine ───────────────────────────────────────────────────────

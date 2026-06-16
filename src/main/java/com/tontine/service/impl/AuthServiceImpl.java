@@ -11,6 +11,7 @@ import com.tontine.service.AuditService;
 import com.tontine.service.AuthService;
 import com.tontine.service.NotificationService;
 import com.tontine.service.SmsAsyncService;
+import com.tontine.util.ContratAdminVersion;
 import com.tontine.util.OtpUtil;
 import com.tontine.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
@@ -180,6 +181,7 @@ public class AuthServiceImpl implements AuthService {
                         .avatarId(u.getAvatarId())
                         .telephoneVerifie(u.getTelephoneVerifie())
                         .pinDefini(u.getPinDefini() != null && u.getPinDefini())
+                        .contratAdminAccepte(ContratAdminVersion.estAcceptee(u.getContratAdminVersion()))
                         .createdAt(u.getCreatedAt()).build())
                 .build();
     }

@@ -13,5 +13,7 @@ public class UtilisateurResponse {
     private Boolean telephoneVerifie;
     /** Indique si le PIN a été configuré (utile côté mobile pour rediriger) */
     private Boolean pinDefini;
+    /** true si la version courante du contrat admin a été acceptée (utile côté mobile pour rediriger) */
+    private Boolean contratAdminAccepte;
     private LocalDateTime createdAt;
 }

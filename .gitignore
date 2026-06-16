@@ -5,6 +5,7 @@ ${project.build.directory}/
 # ── Secrets & credentials ──────────────────────────────────────────────────────
 .env
 firebase-service-account.json
+*firebase-adminsdk*.json
 *.p12
 *.jks
 *.keystore

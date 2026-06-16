@@ -8,6 +8,7 @@ import com.tontine.service.NotificationService;
 import com.tontine.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -44,7 +45,7 @@ public class NotificationController {
     @PostMapping("/fcm-token")
     @Operation(summary = "Enregistrer le token FCM pour les notifications push")
     public ResponseEntity<ApiResponse<String>> enregistrerFcmToken(
-            @RequestBody FcmTokenRequest request) {
+            @Valid @RequestBody FcmTokenRequest request) {
         Long userId = securityUtil.getCurrentUserId();
         Utilisateur u = utilisateurRepository.findById(userId).orElseThrow();
         u.setFcmToken(request.getFcmToken());

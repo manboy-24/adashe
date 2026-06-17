@@ -1,4 +1,5 @@
 package com.tontine.dto.response;
+import com.tontine.enums.TirageAcceptationStatut;
 import com.tontine.enums.TirageType;
 import lombok.*;
 import java.math.BigDecimal;
@@ -19,5 +20,8 @@ public class TirageResponse {
     private TirageType methodeTirage;
     private LocalDate dateTirage;
     private Boolean confirme;
+    private TirageAcceptationStatut statutAcceptation;
+    private LocalDateTime dateExpirationReponse;
+    private Boolean enLitige;
     private LocalDateTime createdAt;
 }

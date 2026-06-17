@@ -1,5 +1,6 @@
 package com.tontine.entity;
 
+import com.tontine.enums.TirageAcceptationStatut;
 import com.tontine.enums.TirageType;
 import jakarta.persistence.*;
 import lombok.*;
@@ -53,6 +54,21 @@ public class Tirage {
     @Column(nullable = false)
     @Builder.Default
     private Boolean confirme = false;
+
+    // ── Fenêtre de réponse du gagnant (15 min) ─────────────────────────────────
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private TirageAcceptationStatut statutAcceptation = TirageAcceptationStatut.EN_ATTENTE;
+
+    /** Passé ce délai, le scheduler considère le silence comme une acceptation. */
+    private LocalDateTime dateExpirationReponse;
+
+    // ── Signalement/contestation (n'importe quel membre) ───────────────────────
+    /** true tant qu'un signalement est en cours d'examen — bloque réponse/confirmation/remplacement. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean enLitige = false;
 
     @Column(length = 500)
     private String commentaire;

@@ -242,4 +242,17 @@ public class PinAuthServiceImpl implements PinAuthService {
         return ApiResponse.success(null, "PIN modifié avec succès. Veuillez vous reconnecter.");
     }
 
+    @Override
+    public ApiResponse<String> verifierPin(String pin, Long userId) {
+        Utilisateur u = repo.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+        if (!Boolean.TRUE.equals(u.getPinDefini()) || u.getCodePin() == null)
+            throw new BadRequestException("Aucun PIN défini — configurez un PIN dans votre profil");
+        if (u.getPinBloqueJusquA() != null && LocalDateTime.now().isBefore(u.getPinBloqueJusquA()))
+            throw new BadRequestException("PIN temporairement bloqué — réessayez dans quelques minutes");
+        if (!encoder.matches(pin, u.getCodePin()))
+            throw new UnauthorizedException("PIN incorrect");
+        return ApiResponse.success(null, "PIN valide");
+    }
+
 }

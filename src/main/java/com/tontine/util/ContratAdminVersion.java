@@ -1,17 +1,18 @@
 package com.tontine.util;
 
 /**
- * Version courante du contrat admin (conditions de commission, amende et
- * garde des fonds) que tout créateur de tontine doit accepter avant de
- * pouvoir en créer une.
+ * Version courante du contrat admin.
  *
- * Incrémenter cette constante force tous les admins à ré-accepter — à faire
- * dès que le contenu du contrat change de façon substantielle (ex: une fois
- * le transfert automatique de la cagnotte réellement implémenté).
+ * Historique :
+ *  v1 — lancement initial (cotisations, amendes, commission)
+ *  v2 — flux complet livré : fenêtre 15 min, renégociation, signalement,
+ *        confirmation sécurisée par PIN, découpage >1M FCFA
+ *
+ * Incrémenter cette constante force tous les admins à ré-accepter.
  */
 public final class ContratAdminVersion {
 
-    public static final int ACTUELLE = 1;
+    public static final int ACTUELLE = 2;
 
     /** true si la version acceptée par l'utilisateur couvre (au moins) la version courante. */
     public static boolean estAcceptee(Integer versionAcceptee) {

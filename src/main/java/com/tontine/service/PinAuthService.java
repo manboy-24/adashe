@@ -9,4 +9,6 @@ public interface PinAuthService {
     ApiResponse<String> demanderResetPin(ResetPinRequest request);
     ApiResponse<AuthResponse> reinitialiserPin(NouveauPinRequest request);
     ApiResponse<String> changerPin(ChangerPinRequest request, Long userId);
+    /** Vérifie le PIN de l'utilisateur authentifié sans échanger de tokens. */
+    ApiResponse<String> verifierPin(String pin, Long userId);
 }

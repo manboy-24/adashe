@@ -42,6 +42,13 @@ public class AuthController {
         return ResponseEntity.ok(authService.renvoyerOtp(telephone));
     }
 
+    @PostMapping("/pin/verifier")
+    @Operation(summary = "Vérifie le PIN de l'utilisateur connecté (sans échange de tokens) — requis avant toute action sensible")
+    public ResponseEntity<ApiResponse<String>> verifierPin(
+            @Valid @RequestBody VerifierPinRequest request) {
+        return ResponseEntity.ok(pinAuthService.verifierPin(request.getPin(), securityUtil.getCurrentUserId()));
+    }
+
     @PostMapping("/pin/creer")
     @Operation(summary = "Créer son PIN 4 chiffres (après OTP vérifié)")
     public ResponseEntity<ApiResponse<AuthResponse>> creerPin(

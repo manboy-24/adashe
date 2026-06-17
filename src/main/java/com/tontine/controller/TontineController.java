@@ -168,6 +168,16 @@ public class TontineController {
         return ResponseEntity.ok(tontineService.effectuerTirage(id, request, securityUtil.getCurrentUserId()));
     }
 
+    @PostMapping("/{tontineId}/tirages/{tirageId}/repondre")
+    @Operation(summary = "Le gagnant accepte ou décline sa cagnotte — fenêtre de 15 min après le tirage")
+    public ResponseEntity<TirageResponse> repondreTirage(
+            @PathVariable Long tontineId,
+            @PathVariable Long tirageId,
+            @Valid @RequestBody TirageReponseRequest request) {
+        return ResponseEntity.ok(tontineService.repondreTirage(
+                tontineId, tirageId, securityUtil.getCurrentUserId(), request.getAccepte()));
+    }
+
     @PostMapping("/{tontineId}/tirages/{tirageId}/confirmer")
     @Operation(summary = "Valider le paiement au bénéficiaire — avance le cycle et envoie les notifications (créateur/admin)")
     public ResponseEntity<TirageResponse> confirmerTirage(
@@ -177,10 +187,69 @@ public class TontineController {
                 tontineService.confirmerTirage(tontineId, tirageId, securityUtil.getCurrentUserId()));
     }
 
+    // ── Renégociation après déclin (membres intéressés) ────────────────────────
+
+    @PostMapping("/{id}/interet")
+    @Operation(summary = "S'enregistrer (ou se retirer) comme intéressé pour recevoir la cagnotte du cycle en cours")
+    public ResponseEntity<ApiResponse<String>> exprimerInteret(
+            @PathVariable Long id,
+            @Valid @RequestBody InteretRequest request) {
+        return ResponseEntity.ok(tontineService.exprimerInteret(
+                id, securityUtil.getCurrentUserId(), request.getInteresse()));
+    }
+
+    @GetMapping("/{id}/interesses")
+    @Operation(summary = "Membres intéressés par la cagnotte du cycle en cours (aide au choix d'un remplaçant)")
+    public ResponseEntity<List<MembreResponse>> getInteresses(@PathVariable Long id) {
+        return ResponseEntity.ok(tontineService.getInteresses(id, securityUtil.getCurrentUserId()));
+    }
+
+    @PostMapping("/{tontineId}/tirages/{tirageId}/remplacant")
+    @Operation(summary = "Choisir un remplaçant pour un tirage décliné — relance la fenêtre de réponse de 15 min (créateur/admin)")
+    public ResponseEntity<TirageResponse> choisirRemplacant(
+            @PathVariable Long tontineId,
+            @PathVariable Long tirageId,
+            @Valid @RequestBody ChoisirRemplacantRequest request) {
+        return ResponseEntity.ok(tontineService.choisirRemplacant(
+                tontineId, tirageId, request.getMembreId(), securityUtil.getCurrentUserId()));
+    }
+
     @GetMapping("/{id}/tirages")
     @Operation(summary = "Historique des tirages")
     public ResponseEntity<List<TirageResponse>> historiqueTirages(@PathVariable Long id) {
         return ResponseEntity.ok(tontineService.getHistoriqueTirages(id, securityUtil.getCurrentUserId()));
+    }
+
+    // ── Signalement / contestation d'un tirage ──────────────────────────────────
+
+    @PostMapping("/{tontineId}/tirages/{tirageId}/signaler")
+    @Operation(summary = "Signaler un problème sur ce tirage (n'importe quel membre) — suspend le tirage jusqu'à résolution")
+    public ResponseEntity<TirageLitigeResponse> signalerLitige(
+            @PathVariable Long tontineId,
+            @PathVariable Long tirageId,
+            @Valid @RequestBody SignalerLitigeRequest request) {
+        return ResponseEntity.ok(tontineService.signalerLitige(
+                tontineId, tirageId, securityUtil.getCurrentUserId(), request.getMotif()));
+    }
+
+    @GetMapping("/{tontineId}/tirages/{tirageId}/litiges")
+    @Operation(summary = "Historique des signalements pour ce tirage (créateur/admin)")
+    public ResponseEntity<List<TirageLitigeResponse>> getLitiges(
+            @PathVariable Long tontineId,
+            @PathVariable Long tirageId) {
+        return ResponseEntity.ok(tontineService.getLitiges(tontineId, tirageId, securityUtil.getCurrentUserId()));
+    }
+
+    @PostMapping("/{tontineId}/tirages/{tirageId}/litiges/{litigeId}/resoudre")
+    @Operation(summary = "Trancher un signalement — confirmer (invalide le tirage) ou rejeter (créateur/admin)")
+    public ResponseEntity<TirageLitigeResponse> resoudreLitige(
+            @PathVariable Long tontineId,
+            @PathVariable Long tirageId,
+            @PathVariable Long litigeId,
+            @Valid @RequestBody ResoudreLitigeRequest request) {
+        return ResponseEntity.ok(tontineService.resoudreLitige(
+                tontineId, tirageId, litigeId, request.getConfirme(), request.getCommentaire(),
+                securityUtil.getCurrentUserId()));
     }
 
     // ── Statistiques (créateur uniquement) ───────────────────────────────────

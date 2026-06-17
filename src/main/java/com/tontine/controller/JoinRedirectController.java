@@ -22,7 +22,7 @@ public class JoinRedirectController {
                   <meta charset="UTF-8">
                   <meta name="viewport" content="width=device-width, initial-scale=1">
                   <meta http-equiv="refresh" content="1;url=%s">
-                  <title>AdasheCash – Rejoindre la tontine</title>
+                  <title>Adashe – Rejoindre la tontine</title>
                   <style>
                     body { font-family: sans-serif; text-align: center;
                            padding: 40px 20px; background: #0d1b2a; color: #fff; }
@@ -37,11 +37,11 @@ public class JoinRedirectController {
                   </script>
                 </head>
                 <body>
-                  <h2>AdasheCash</h2>
+                  <h2>Adashe</h2>
                   <p>Ouverture de l'application…</p>
                   <div class="code">%s</div>
                   <p>Si l'app ne s'ouvre pas automatiquement :<br>
-                     lancez <strong>AdasheCash</strong> → bouton <em>Rejoindre</em>
+                     lancez <strong>Adashe</strong> → bouton <em>Rejoindre</em>
                      et entrez le code ci-dessus.</p>
                   <p><a href="%s">Ouvrir manuellement</a></p>
                 </body>

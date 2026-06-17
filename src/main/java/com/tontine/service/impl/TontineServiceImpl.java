@@ -266,7 +266,7 @@ public class TontineServiceImpl implements TontineService {
                     + "Vous avez rejoint la tontine \"" + t.getNom() + "\".\n\n"
                     + "Montant de cotisation : " + t.getMontantContribution() + " " + t.getDevise()
                     + "\nFréquence : " + t.getFrequence().name().toLowerCase() + "\n\n"
-                    + "Bonne tontine !\nL'équipe AdasheCash");
+                    + "Bonne tontine !\nL'équipe Adashe");
         }
 
         return ApiResponse.success(null, "Invitation acceptée — vous êtes maintenant membre de " + membre.getTontine().getNom());
@@ -730,7 +730,7 @@ public class TontineServiceImpl implements TontineService {
                     + tirage.getNumeroCycle() + " de la tontine \"" + tontine.getNom() + "\".\n\n"
                     + "Montant de la cagnotte : " + cagnotte + " " + tontine.getDevise() + "\n"
                     + "Date du tirage : " + tirage.getDateTirage() + "\n\n"
-                    + "L'équipe AdasheCash";
+                    + "L'équipe Adashe";
             emailAsyncService.envoyerEmailAsync(emailBenef, sujet, corps);
         }
 

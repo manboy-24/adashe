@@ -64,7 +64,7 @@ public class AuthServiceImpl implements AuthService {
         utilisateurRepository.save(u);
 
         smsAsyncService.envoyerSmsAsync(request.getTelephone(),
-                "AdasheCash - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
+                "Adashe - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
 
         log.info("Inscription: {} - OTP envoye", request.getTelephone());
         auditService.log(null, request.getTelephone(), "INSCRIPTION", true, null);
@@ -114,7 +114,7 @@ public class AuthServiceImpl implements AuthService {
         utilisateurRepository.save(u);
 
         smsAsyncService.envoyerSmsAsync(telephone,
-                "AdasheCash - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
+                "Adashe - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
 
         return ApiResponse.success(null, "Nouveau code envoyé au " + masquerTelephone(telephone));
     }
@@ -151,7 +151,7 @@ public class AuthServiceImpl implements AuthService {
             auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false,
                     "Toutes les sessions invalidées — replay détecté");
             smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "AdasheCash - Sécurité : activité suspecte détectée. "
+                    "Adashe - Sécurité : activité suspecte détectée. "
                     + "Toutes vos sessions ont été déconnectées. "
                     + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
         });

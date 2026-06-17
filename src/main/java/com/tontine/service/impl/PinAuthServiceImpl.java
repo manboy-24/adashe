@@ -95,7 +95,7 @@ public class PinAuthServiceImpl implements PinAuthService {
                 auditService.log(u.getId(), u.getTelephone(), "CONNEXION_PIN", false,
                         "Compte bloqué après " + tentatives + " tentatives");
                 smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                        "AdasheCash - Sécurité : votre compte a été bloqué " + blocageMinutes
+                        "Adashe - Sécurité : votre compte a été bloqué " + blocageMinutes
                         + " min après " + tentatives + " tentatives incorrectes. "
                         + "Si ce n'était pas vous, réinitialisez votre PIN immédiatement.");
                 throw new UnauthorizedException(
@@ -147,7 +147,7 @@ public class PinAuthServiceImpl implements PinAuthService {
                     "Code envoyé à " + masquerEmail(u.getEmail()));
         } else {
             smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "AdasheCash - Code reset PIN : " + otp + ". Valable " + otpExpiration + " min.");
+                    "Adashe - Code reset PIN : " + otp + ". Valable " + otpExpiration + " min.");
             return ApiResponse.success(null,
                     "Code envoyé au " + masquerTelephone(u.getTelephone()));
         }
@@ -185,12 +185,12 @@ public class PinAuthServiceImpl implements PinAuthService {
         auditService.log(u.getId(), u.getTelephone(), "RESET_PIN", true, null);
         if (u.getEmail() != null && !u.getEmail().isBlank()) {
             emailAsyncService.envoyerEmailAsync(u.getEmail(),
-                    "Sécurité AdasheCash — votre PIN a été réinitialisé",
+                    "Sécurité Adashe — votre PIN a été réinitialisé",
                     "Bonjour " + u.getPrenom() + ",\n\n"
-                    + "Votre PIN AdasheCash a été réinitialisé avec succès.\n"
+                    + "Votre PIN Adashe a été réinitialisé avec succès.\n"
                     + "Si vous n'êtes pas à l'origine de cette action, "
                     + "contactez-nous immédiatement.\n\n"
-                    + "L'équipe AdasheCash");
+                    + "L'équipe Adashe");
         }
         return ApiResponse.success(authHelper.genererAuthResponse(u),
                 "PIN réinitialisé avec succès ! Vous êtes maintenant connecté.");
@@ -232,12 +232,12 @@ public class PinAuthServiceImpl implements PinAuthService {
         auditService.log(u.getId(), u.getTelephone(), "CHANGEMENT_PIN", true, null);
         if (u.getEmail() != null && !u.getEmail().isBlank()) {
             emailAsyncService.envoyerEmailAsync(u.getEmail(),
-                    "Sécurité AdasheCash — votre PIN a été modifié",
+                    "Sécurité Adashe — votre PIN a été modifié",
                     "Bonjour " + u.getPrenom() + ",\n\n"
-                    + "Votre PIN AdasheCash a été modifié avec succès.\n"
+                    + "Votre PIN Adashe a été modifié avec succès.\n"
                     + "Si vous n'êtes pas à l'origine de cette modification, "
                     + "réinitialisez immédiatement votre PIN via l'application.\n\n"
-                    + "L'équipe AdasheCash");
+                    + "L'équipe Adashe");
         }
         return ApiResponse.success(null, "PIN modifié avec succès. Veuillez vous reconnecter.");
     }

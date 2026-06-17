@@ -44,7 +44,7 @@ public class NotificationServiceImpl implements NotificationService {
     // Africa's Talking
     @Value("${africastalking.api-key:}")      private String atApiKey;
     @Value("${africastalking.username:sandbox}") private String atUsername;
-    @Value("${africastalking.sender-id:AdasheCash}") private String atSenderId;
+    @Value("${africastalking.sender-id:Adashe}") private String atSenderId;
 
     // Twilio
     @Value("${twilio.account-sid:}")  private String twilioAccountSid;

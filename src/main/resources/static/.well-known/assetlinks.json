@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.tontineplus.app",
+    "sha256_cert_fingerprints": [
+      "BF:D3:43:1C:08:A8:0B:3E:EA:E6:55:05:68:31:99:5F:9C:DF:49:6A:FC:B2:E0:CA:BD:22:5F:AE:52:42:B1:99"
+    ]
+  }
+}]

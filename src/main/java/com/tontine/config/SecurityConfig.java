@@ -44,7 +44,8 @@ public class SecurityConfig {
             "/dons/webhook/**",
             "/actuator/health",
             "/actuator/info",
-            "/ws/**"          // JWT validé dans JwtHandshakeInterceptor, pas ici
+            "/ws/**",         // JWT validé dans JwtHandshakeInterceptor, pas ici
+            "/join/**"        // Page de redirection deep-link (liens WhatsApp/SMS)
     };
 
     @Bean

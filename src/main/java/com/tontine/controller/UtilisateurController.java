@@ -164,6 +164,25 @@ public class UtilisateurController {
         return ResponseEntity.ok(ApiResponse.success(null, "Notifications push désactivées"));
     }
 
+    @PatchMapping("/email")
+    @Operation(summary = "Ajouter ou modifier l'adresse email de l'utilisateur connecté")
+    public ResponseEntity<ApiResponse<String>> updateEmail(@RequestBody Map<String, String> body) {
+        String email = body.getOrDefault("email", "").trim();
+        if (email.isBlank() || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+            throw new BadRequestException("Format email invalide");
+        }
+        Long userId = securityUtil.getCurrentUserId();
+        utilisateurRepository.findByEmail(email).ifPresent(existing -> {
+            if (!existing.getId().equals(userId))
+                throw new BadRequestException("Cet email est déjà utilisé par un autre compte");
+        });
+        Utilisateur u = utilisateurRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+        u.setEmail(email);
+        utilisateurRepository.save(u);
+        return ResponseEntity.ok(ApiResponse.success(email, "Email enregistré"));
+    }
+
     @PutMapping("/avatar")
     @Operation(summary = "Mettre à jour l'avatar de l'utilisateur connecté")
     public ResponseEntity<ApiResponse<String>> updateAvatar(@RequestBody Map<String, String> body) {

@@ -9,6 +9,7 @@ import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.AuditService;
 import com.tontine.service.AuthService;
+import com.tontine.service.EmailAsyncService;
 import com.tontine.service.NotificationService;
 import com.tontine.service.SmsAsyncService;
 import com.tontine.util.ContratAdminVersion;
@@ -39,6 +40,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserDetailsService userDetailsService;
     private final NotificationService notificationService;
     private final SmsAsyncService smsAsyncService;
+    private final EmailAsyncService emailAsyncService;
     private final AuditService auditService;
     private final RestTemplate restTemplate;
 
@@ -68,13 +70,22 @@ public class AuthServiceImpl implements AuthService {
                 .build();
         utilisateurRepository.save(u);
 
-        smsAsyncService.envoyerSmsAsync(request.getTelephone(),
+        boolean viaEmail = request.getEmail() != null && !request.getEmail().isBlank();
+        if (viaEmail) {
+            emailAsyncService.envoyerEmailAsync(
+                request.getEmail(),
+                "Adashe — Code de vérification",
+                corpsEmailOtp(otp, otpExpiration)
+            );
+        } else {
+            smsAsyncService.envoyerSmsAsync(request.getTelephone(),
                 "Adashe - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
+        }
 
-        log.info("Inscription: {} - OTP envoye", request.getTelephone());
+        log.info("Inscription: {} - OTP envoyé par {}", request.getTelephone(), viaEmail ? "email" : "SMS");
         auditService.log(null, request.getTelephone(), "INSCRIPTION", true, null);
-        return ApiResponse.success(null,
-                "Code de vérification envoyé au " + masquerTelephone(request.getTelephone()));
+        String destination = viaEmail ? masquerEmail(request.getEmail()) : masquerTelephone(request.getTelephone());
+        return ApiResponse.success(null, "Code de vérification envoyé à " + destination);
     }
 
     // ── Vérifier OTP d'inscription ──────────────────────────────────────────
@@ -118,10 +129,20 @@ public class AuthServiceImpl implements AuthService {
         u.setOtpExpiration(LocalDateTime.now().plusMinutes(otpExpiration));
         utilisateurRepository.save(u);
 
-        smsAsyncService.envoyerSmsAsync(telephone,
+        boolean viaEmail = u.getEmail() != null && !u.getEmail().isBlank();
+        if (viaEmail) {
+            emailAsyncService.envoyerEmailAsync(
+                u.getEmail(),
+                "Adashe — Nouveau code de vérification",
+                corpsEmailOtp(otp, otpExpiration)
+            );
+        } else {
+            smsAsyncService.envoyerSmsAsync(telephone,
                 "Adashe - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
+        }
 
-        return ApiResponse.success(null, "Nouveau code envoyé au " + masquerTelephone(telephone));
+        String destination = viaEmail ? masquerEmail(u.getEmail()) : masquerTelephone(telephone);
+        return ApiResponse.success(null, "Nouveau code envoyé à " + destination);
     }
 
     // ── Refresh token JWT ───────────────────────────────────────────────────
@@ -297,5 +318,25 @@ public class AuthServiceImpl implements AuthService {
     private String masquerTelephone(String tel) {
         if (tel == null || tel.length() < 4) return "****";
         return tel.substring(0, tel.length() - 4).replaceAll("\\d", "*") + tel.substring(tel.length() - 4);
+    }
+
+    private String masquerEmail(String email) {
+        if (email == null || !email.contains("@")) return "****";
+        String[] parts = email.split("@");
+        String local  = parts[0];
+        String domain = parts[1];
+        String masque = local.length() <= 2
+            ? local.charAt(0) + "***"
+            : local.substring(0, 2) + "*".repeat(Math.min(local.length() - 2, 4));
+        return masque + "@" + domain;
+    }
+
+    private String corpsEmailOtp(String otp, int expirationMinutes) {
+        return "Bonjour,\n\n"
+            + "Votre code de vérification Adashe est :\n\n"
+            + "    " + otp + "\n\n"
+            + "Ce code est valable " + expirationMinutes + " minutes.\n\n"
+            + "Si vous n'avez pas demandé ce code, ignorez cet email.\n\n"
+            + "— L'équipe Adashe";
     }
 }

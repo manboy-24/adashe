@@ -2,9 +2,11 @@ package com.tontine.service.impl;
 
 import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
+import com.tontine.entity.Session;
 import com.tontine.entity.Utilisateur;
 import com.tontine.enums.Role;
 import com.tontine.exception.*;
+import com.tontine.repository.SessionRepository;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.AuditService;
@@ -35,6 +37,7 @@ import java.util.Map;
 public class AuthServiceImpl implements AuthService {
 
     private final UtilisateurRepository utilisateurRepository;
+    private final SessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
@@ -150,32 +153,57 @@ public class AuthServiceImpl implements AuthService {
     public ApiResponse<AuthResponse> rafraichirToken(String refreshToken) {
         String hash = hashToken(refreshToken);
 
-        // Cas normal : token actif trouvé
+        // ── 1. Vérifier dans la table sessions (connexions avec deviceId) ───────
+        java.util.Optional<Session> optSession = sessionRepository.findByRefreshTokenHash(hash);
+        if (optSession.isPresent()) {
+            Session session = optSession.get();
+            Utilisateur u   = session.getUtilisateur();
+            if (!Boolean.TRUE.equals(session.getActive()) || LocalDateTime.now().isAfter(session.getExpiresAt())) {
+                session.setActive(false);
+                sessionRepository.save(session);
+                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Session expirée");
+                throw new UnauthorizedException("Session expirée. Veuillez vous reconnecter.");
+            }
+            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, "device: " + session.getDeviceName());
+            return ApiResponse.success(genererAuthResponseAvecSession(u, session.getDeviceId(), session.getDeviceName()), "Token rafraîchi");
+        }
+
+        // ── 2. Replay dans sessions (token déjà consommé) ────────────────────────
+        sessionRepository.findByPreviousRefreshTokenHash(hash).ifPresent(session -> {
+            Utilisateur u = session.getUtilisateur();
+            log.warn("SECURITY — Replay session={} userId={}", session.getId(), u.getId());
+            sessionRepository.deactivateAll(u.getId());
+            u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
+            utilisateurRepository.save(u);
+            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Toutes sessions révoquées");
+            smsAsyncService.envoyerSmsAsync(u.getTelephone(),
+                    "Adashe - Sécurité : activité suspecte détectée. "
+                    + "Toutes vos sessions ont été déconnectées. "
+                    + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
+        });
+
+        // ── 3. Fallback legacy : token stocké sur l'utilisateur (sans deviceId) ──
         java.util.Optional<Utilisateur> optUser = utilisateurRepository.findByRefreshToken(hash);
         if (optUser.isPresent()) {
             Utilisateur u = optUser.get();
             if (LocalDateTime.now().isAfter(u.getRefreshTokenExpiration())) {
-                u.setRefreshToken(null);
-                u.setRefreshTokenExpiration(null);
-                u.setPreviousRefreshTokenHash(null);
+                u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
                 utilisateurRepository.save(u);
-                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Token expiré");
+                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Token expiré (legacy)");
                 throw new UnauthorizedException("Session expirée. Veuillez vous reconnecter.");
             }
-            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, null);
+            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, "legacy");
             return ApiResponse.success(genererAuthResponse(u), "Token rafraîchi");
         }
 
-        // Replay détecté : le token correspond au précédent déjà consommé → vol potentiel
+        // ── 4. Replay legacy ──────────────────────────────────────────────────────
         utilisateurRepository.findByPreviousRefreshTokenHash(hash).ifPresent(u -> {
-            log.warn("SECURITY — Replay token détecté pour userId={} tel={}", u.getId(), u.getTelephone());
-            u.setRefreshToken(null);
-            u.setRefreshTokenExpiration(null);
-            u.setPreviousRefreshTokenHash(null);
+            log.warn("SECURITY — Replay token legacy userId={}", u.getId());
+            u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
             u.setFcmToken(null);
             utilisateurRepository.save(u);
-            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false,
-                    "Toutes les sessions invalidées — replay détecté");
+            sessionRepository.deactivateAll(u.getId());
+            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Legacy — sessions révoquées");
             smsAsyncService.envoyerSmsAsync(u.getTelephone(),
                     "Adashe - Sécurité : activité suspecte détectée. "
                     + "Toutes vos sessions ont été déconnectées. "
@@ -186,17 +214,47 @@ public class AuthServiceImpl implements AuthService {
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /** Génère un AuthResponse sans créer de session (flows sans deviceId). */
     public AuthResponse genererAuthResponse(Utilisateur u) {
         UserDetails ud = userDetailsService.loadUserByUsername(u.getTelephone());
         String access  = jwtService.generateToken(ud);
         String refresh = jwtService.generateRefreshToken(ud);
 
-        // Conserver le hash actuel comme "précédent" pour détecter les replays
         u.setPreviousRefreshTokenHash(u.getRefreshToken());
         u.setRefreshToken(hashToken(refresh));
         u.setRefreshTokenExpiration(LocalDateTime.now().plusDays(7));
         utilisateurRepository.save(u);
 
+        return buildAuthResponse(u, access, refresh);
+    }
+
+    /** Génère un AuthResponse ET crée/met à jour la session pour le deviceId donné. */
+    public AuthResponse genererAuthResponseAvecSession(Utilisateur u, String deviceId, String deviceName) {
+        UserDetails ud = userDetailsService.loadUserByUsername(u.getTelephone());
+        String access  = jwtService.generateToken(ud);
+        String refresh = jwtService.generateRefreshToken(ud);
+        String hash    = hashToken(refresh);
+
+        Session session = sessionRepository
+                .findByUtilisateurIdAndDeviceIdAndActiveTrue(u.getId(), deviceId)
+                .orElse(Session.builder()
+                        .utilisateur(u)
+                        .deviceId(deviceId)
+                        .deviceName(deviceName)
+                        .active(true)
+                        .build());
+        session.setPreviousRefreshTokenHash(session.getRefreshTokenHash());
+        session.setRefreshTokenHash(hash);
+        session.setLastUsedAt(LocalDateTime.now());
+        session.setExpiresAt(LocalDateTime.now().plusDays(7));
+        session.setActive(true);
+        sessionRepository.save(session);
+
+        return buildAuthResponse(u, access, refresh);
+    }
+
+    private AuthResponse buildAuthResponse(Utilisateur u, String access, String refresh) {
         return AuthResponse.builder()
                 .accessToken(access).refreshToken(refresh)
                 .tokenType("Bearer").expiresIn(jwtService.getExpirationTime())
@@ -212,7 +270,7 @@ public class AuthServiceImpl implements AuthService {
                 .build();
     }
 
-    // ── Déconnexion : invalide le refresh token en base ─────────────────────
+    // ── Déconnexion : invalide le refresh token et toutes les sessions ───────
     @Override
     public ApiResponse<String> deconnecter(Long userId) {
         Long currentUserId = securityUtil.getCurrentUserId();
@@ -224,6 +282,7 @@ public class AuthServiceImpl implements AuthService {
             u.setRefreshTokenExpiration(null);
             u.setFcmToken(null);
             utilisateurRepository.save(u);
+            sessionRepository.deactivateAll(userId);
             log.info("Déconnexion: userId={}", userId);
             auditService.log(u.getId(), u.getTelephone(), "DECONNEXION", true, null);
         });

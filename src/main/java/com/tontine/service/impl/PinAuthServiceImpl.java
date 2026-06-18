@@ -2,13 +2,16 @@ package com.tontine.service.impl;
 
 import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
+import com.tontine.entity.Session;
 import com.tontine.entity.Utilisateur;
 import com.tontine.exception.*;
+import com.tontine.repository.SessionRepository;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.*;
 import com.tontine.service.AuditService;
 import com.tontine.service.EmailAsyncService;
+import com.tontine.service.PushAsyncService;
 import com.tontine.service.SmsAsyncService;
 import com.tontine.util.OtpUtil;
 import lombok.RequiredArgsConstructor;
@@ -19,17 +22,21 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service @RequiredArgsConstructor @Slf4j @Transactional
 public class PinAuthServiceImpl implements PinAuthService {
 
     private final UtilisateurRepository repo;
+    private final SessionRepository sessionRepository;
     private final PasswordEncoder encoder;
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final NotificationService notifService;
     private final SmsAsyncService smsAsyncService;
     private final EmailAsyncService emailAsyncService;
+    private final PushAsyncService pushAsyncService;
     private final AuthServiceImpl authHelper;
     private final AuditService auditService;
 
@@ -64,7 +71,7 @@ public class PinAuthServiceImpl implements PinAuthService {
 
     // ── 2. Connexion téléphone + PIN ───────────────────────────────────────────
     @Override
-    public ApiResponse<AuthResponse> connecterAvecPin(ConnexionPinRequest request) {
+    public ApiResponse<ConnexionPinResponse> connecterAvecPin(ConnexionPinRequest request) {
         // On ne révèle pas si le numéro existe ou non (sécurité)
         Utilisateur u = repo.findByTelephone(request.getTelephone())
                 .orElseThrow(() -> new UnauthorizedException("Numéro ou PIN incorrect"));
@@ -83,11 +90,10 @@ public class PinAuthServiceImpl implements PinAuthService {
         }
 
         if (!encoder.matches(request.getPin(), u.getCodePin())) {
-            // Incrément atomique pour éviter la race condition sur deux requêtes simultanées
             repo.incrementTentativesEchouees(u.getId());
             u = repo.findById(u.getId()).orElseThrow();
             int tentatives = u.getTentativesPinEchouees() == null ? 1 : u.getTentativesPinEchouees();
-            int restantes = maxTentatives - tentatives;
+            int restantes  = maxTentatives - tentatives;
 
             if (tentatives >= maxTentatives) {
                 u.setPinBloqueJusquA(LocalDateTime.now().plusMinutes(blocageMinutes));
@@ -107,14 +113,119 @@ public class PinAuthServiceImpl implements PinAuthService {
             throw new UnauthorizedException("PIN incorrect. " + restantes + " tentative(s) restante(s).");
         }
 
-        // Succès
+        // PIN valide
         u.setTentativesPinEchouees(0);
         u.setPinBloqueJusquA(null);
         repo.save(u);
 
-        log.info("Connexion PIN réussie: {}", u.getTelephone());
+        // ── Vérification d'appareil ──────────────────────────────────────────
+        String deviceId   = request.getDeviceId();
+        String deviceName = request.getDeviceName();
+
+        if (deviceId != null && !deviceId.isBlank()) {
+            boolean appareilConnu = sessionRepository
+                    .existsByUtilisateurIdAndDeviceIdAndActiveTrue(u.getId(), deviceId);
+
+            if (!appareilConnu) {
+                List<Session> sessionsActives = sessionRepository
+                        .findByUtilisateurIdAndActiveTrue(u.getId());
+
+                if (!sessionsActives.isEmpty()) {
+                    // Appareil inconnu + sessions existantes → OTP requis
+                    String otp = OtpUtil.generer(6);
+                    u.setOtpCode(encoder.encode(otp));
+                    u.setOtpExpiration(LocalDateTime.now().plusMinutes(otpExpiration));
+                    u.setOtpPurpose("NOUVEL_APPAREIL");
+                    repo.save(u);
+
+                    // Notifier les appareils existants via push
+                    sessionsActives.stream()
+                            .filter(s -> s.getFcmToken() != null && !s.getFcmToken().isBlank())
+                            .forEach(s -> pushAsyncService.envoyerPushAsync(
+                                    s.getFcmToken(),
+                                    "Tentative de connexion sur un nouvel appareil",
+                                    "Si ce n'est pas vous, sécurisez votre compte immédiatement.",
+                                    "SECURITE",
+                                    null));
+
+                    String destination;
+                    boolean viaEmail = u.getEmail() != null && !u.getEmail().isBlank();
+                    if (viaEmail) {
+                        notifService.envoyerEmail(u.getEmail(),
+                                "Adashe — Connexion sur un nouvel appareil",
+                                "Bonjour " + u.getPrenom() + ",\n\n"
+                                + "Une tentative de connexion a été détectée depuis un nouvel appareil"
+                                + (deviceName != null ? " (" + deviceName + ")" : "") + ".\n\n"
+                                + "Code de confirmation : " + otp + "\n"
+                                + "Valable " + otpExpiration + " minutes.\n\n"
+                                + "Si ce n'est pas vous, changez votre PIN immédiatement.\n\n"
+                                + "— L'équipe Adashe");
+                        destination = masquerEmail(u.getEmail());
+                    } else {
+                        smsAsyncService.envoyerSmsAsync(u.getTelephone(),
+                                "Adashe - Code appareil : " + otp + ". Valable " + otpExpiration
+                                + " min. Si ce n'est pas vous, changez votre PIN.");
+                        destination = masquerTelephone(u.getTelephone());
+                    }
+
+                    log.info("Nouvel appareil détecté userId={} deviceId={}", u.getId(), deviceId);
+                    auditService.log(u.getId(), u.getTelephone(), "NOUVEL_APPAREIL", false,
+                            "deviceId=" + deviceId);
+
+                    return ApiResponse.success(
+                            ConnexionPinResponse.builder()
+                                    .action("NOUVEL_APPAREIL_OTP")
+                                    .otpDestination(destination)
+                                    .build(),
+                            "Nouvel appareil détecté. Code envoyé à " + destination);
+                }
+            }
+            // Appareil connu OU premier appareil (aucune session active) → session
+            AuthResponse auth = authHelper.genererAuthResponseAvecSession(u, deviceId, deviceName);
+            log.info("Connexion PIN réussie: {} device={}", u.getTelephone(), deviceName);
+            auditService.log(u.getId(), u.getTelephone(), "CONNEXION_PIN", true, "device=" + deviceName);
+            return ApiResponse.success(toConnexionPinResponse(auth), "Connexion réussie");
+        }
+
+        // Pas de deviceId → chemin legacy
+        AuthResponse auth = authHelper.genererAuthResponse(u);
+        log.info("Connexion PIN réussie (legacy): {}", u.getTelephone());
         auditService.log(u.getId(), u.getTelephone(), "CONNEXION_PIN", true, null);
-        return ApiResponse.success(authHelper.genererAuthResponse(u), "Connexion réussie");
+        return ApiResponse.success(toConnexionPinResponse(auth), "Connexion réussie");
+    }
+
+    // ── 2b. Confirmer connexion depuis nouvel appareil (OTP) ─────────────────
+    @Override
+    public ApiResponse<ConnexionPinResponse> confirmerNouvelAppareil(ConfirmerNouvelAppareilRequest request) {
+        Utilisateur u = repo.findByTelephone(request.getTelephone())
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+
+        if (!Boolean.TRUE.equals(u.getPinDefini()) || u.getCodePin() == null
+                || !encoder.matches(request.getPin(), u.getCodePin()))
+            throw new UnauthorizedException("PIN incorrect");
+
+        if (!"NOUVEL_APPAREIL".equals(u.getOtpPurpose()) || u.getOtpCode() == null)
+            throw new BadRequestException("Aucune demande de confirmation en cours");
+
+        if (!encoder.matches(request.getOtpCode(), u.getOtpCode()))
+            throw new BadRequestException("Code de vérification invalide");
+
+        if (LocalDateTime.now().isAfter(u.getOtpExpiration()))
+            throw new BadRequestException("Code expiré. Veuillez vous reconnecter pour en recevoir un nouveau.");
+
+        u.setOtpCode(null);
+        u.setOtpExpiration(null);
+        u.setOtpPurpose(null);
+        repo.save(u);
+
+        AuthResponse auth = authHelper.genererAuthResponseAvecSession(
+                u, request.getDeviceId(), request.getDeviceName());
+
+        log.info("Nouvel appareil confirmé userId={} deviceId={}", u.getId(), request.getDeviceId());
+        auditService.log(u.getId(), u.getTelephone(), "CONFIRMER_NOUVEL_APPAREIL", true,
+                "deviceId=" + request.getDeviceId());
+
+        return ApiResponse.success(toConnexionPinResponse(auth), "Appareil confirmé ! Connexion réussie.");
     }
 
     // ── 3. Demander reset PIN (envoie OTP par SMS ou email) ───────────────────
@@ -253,6 +364,61 @@ public class PinAuthServiceImpl implements PinAuthService {
         if (!encoder.matches(pin, u.getCodePin()))
             throw new UnauthorizedException("PIN incorrect");
         return ApiResponse.success(null, "PIN valide");
+    }
+
+    // ── Lister les sessions actives ───────────────────────────────────────────
+    @Override
+    public List<SessionResponse> listerSessions(Long userId, String currentDeviceId) {
+        return sessionRepository.findByUtilisateurIdAndActiveTrue(userId).stream()
+                .map(s -> SessionResponse.builder()
+                        .id(s.getId())
+                        .deviceName(s.getDeviceName() != null ? s.getDeviceName() : "Appareil inconnu")
+                        .deviceId(s.getDeviceId())
+                        .createdAt(s.getCreatedAt())
+                        .lastUsedAt(s.getLastUsedAt())
+                        .active(Boolean.TRUE.equals(s.getActive()))
+                        .current(s.getDeviceId().equals(currentDeviceId))
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    // ── Révoquer une session par ID ────────────────────────────────────────────
+    @Override
+    public ApiResponse<String> revoquerSession(Long sessionId, Long userId) {
+        Session session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Session non trouvée"));
+        if (!session.getUtilisateur().getId().equals(userId))
+            throw new ForbiddenException("Vous ne pouvez révoquer que vos propres sessions");
+        session.setActive(false);
+        sessionRepository.save(session);
+        auditService.log(userId, null, "REVOQUER_SESSION", true, "sessionId=" + sessionId);
+        return ApiResponse.success(null, "Session révoquée avec succès");
+    }
+
+    // ── Révoquer toutes les sessions sauf la courante ─────────────────────────
+    @Override
+    public ApiResponse<String> revoquerToutesLesSessions(Long userId, Long exceptSessionId) {
+        if (exceptSessionId != null) {
+            sessionRepository.deactivateAllExcept(userId, exceptSessionId);
+        } else {
+            sessionRepository.deactivateAll(userId);
+        }
+        auditService.log(userId, null, "REVOQUER_TOUTES_SESSIONS", true,
+                "exceptSessionId=" + exceptSessionId);
+        return ApiResponse.success(null, "Toutes les autres sessions ont été déconnectées");
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    private ConnexionPinResponse toConnexionPinResponse(AuthResponse auth) {
+        return ConnexionPinResponse.builder()
+                .action("CONNECTE")
+                .accessToken(auth.getAccessToken())
+                .refreshToken(auth.getRefreshToken())
+                .tokenType(auth.getTokenType())
+                .expiresIn(auth.getExpiresIn())
+                .pinDefini(auth.getPinDefini())
+                .utilisateur(auth.getUtilisateur())
+                .build();
     }
 
 }

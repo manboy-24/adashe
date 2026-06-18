@@ -30,6 +30,7 @@ class RappelCotisationSchedulerTest {
     @Mock private CotisationRepository    cotisationRepository;
     @Mock private TirageRepository        tirageRepository;
     @Mock private NotificationService     notificationService;
+    @Mock private NotificationRepository  notificationRepository;
     @Mock private SmsAsyncService         smsAsyncService;
 
     @InjectMocks

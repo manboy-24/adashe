@@ -1,5 +1,6 @@
 package com.tontine.scheduler;
 
+import com.tontine.repository.MembreTontineRepository;
 import com.tontine.repository.UtilisateurRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,7 +16,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class NettoyageTokensSchedulerTest {
 
-    @Mock private UtilisateurRepository utilisateurRepository;
+    @Mock private UtilisateurRepository   utilisateurRepository;
+    @Mock private MembreTontineRepository membreRepository;
 
     @InjectMocks
     private NettoyageTokensScheduler scheduler;

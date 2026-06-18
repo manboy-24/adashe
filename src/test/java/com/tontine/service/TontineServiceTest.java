@@ -47,6 +47,8 @@ class TontineServiceTest {
     @Mock private com.tontine.repository.TirageInteretRepository tirageInteretRepository;
     @Mock private com.tontine.repository.TirageLitigeRepository tirageLitigeRepository;
     @Mock private UtilisateurRepository utilisateurRepository;
+    @Mock private com.tontine.repository.CompteWalletRepository compteWalletRepository;
+    @Mock private com.tontine.service.impl.VirementCommissionService virementCommissionService;
     @Mock private NotificationService notificationService;
     @Mock private EmailAsyncService emailAsyncService;
     @Mock private SecurityUtil securityUtil;
@@ -188,6 +190,7 @@ class TontineServiceTest {
         when(cotisationRepository.sumMontantPayeByTontineId(anyLong())).thenReturn(null);
         when(membreRepository.findByTontineIdAndStatutMembreNot(anyLong(), any())).thenReturn(List.of(membreCreateur, m2));
         when(securityUtil.getCurrentUserId()).thenReturn(1L);
+        when(compteWalletRepository.findActifsByUtilisateurId(anyLong())).thenReturn(List.of(new com.tontine.entity.CompteWallet()));
 
         TontineResponse response = tontineService.demarrerTontine(10L, 1L);
 
@@ -490,6 +493,7 @@ class TontineServiceTest {
         when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
         when(tirageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of());
+        when(virementCommissionService.creerVirementsEnAttente(any())).thenReturn(List.of());
 
         TirageResponse response = tontineService.confirmerTirage(10L, 50L, 1L);
 

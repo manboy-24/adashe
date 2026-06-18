@@ -23,9 +23,12 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Service @RequiredArgsConstructor @Slf4j @Transactional
 public class AuthServiceImpl implements AuthService {
@@ -37,11 +40,13 @@ public class AuthServiceImpl implements AuthService {
     private final NotificationService notificationService;
     private final SmsAsyncService smsAsyncService;
     private final AuditService auditService;
+    private final RestTemplate restTemplate;
 
     @Autowired
     private SecurityUtil securityUtil;
 
     @Value("${otp.expiration-minutes:5}") private int otpExpiration;
+    @Value("${google.client-id}")         private String googleClientId;
 
     // ── Inscription : téléphone + nom/prénom, pas de mot de passe ─────────────
     @Override
@@ -202,6 +207,78 @@ public class AuthServiceImpl implements AuthService {
             auditService.log(u.getId(), u.getTelephone(), "DECONNEXION", true, null);
         });
         return ApiResponse.success(null, "Déconnecté avec succès");
+    }
+
+    // ── Connexion / inscription via Google ──────────────────────────────────
+    @Override
+    public ApiResponse<GoogleAuthResponse> connexionGoogle(GoogleAuthRequest request) {
+        // Vérifier le token auprès de Google (évite d'ajouter google-api-client)
+        Map<String, Object> payload = verifierTokenGoogle(request.getIdToken());
+
+        String email    = (String) payload.get("email");
+        String prenom   = (String) payload.getOrDefault("given_name",  "");
+        String nom      = (String) payload.getOrDefault("family_name", prenom);
+        String nomComplet = (prenom + " " + nom).trim();
+
+        java.util.Optional<Utilisateur> optUser = utilisateurRepository.findByEmail(email);
+
+        if (optUser.isEmpty()) {
+            // Nouvel utilisateur — l'app mobile doit demander le numéro de téléphone
+            log.info("Connexion Google : nouvel utilisateur {}", email);
+            return ApiResponse.success(
+                GoogleAuthResponse.builder()
+                    .nouvelUtilisateur(true)
+                    .email(email)
+                    .nomComplet(nomComplet)
+                    .build(),
+                "Compte non trouvé — veuillez compléter votre inscription"
+            );
+        }
+
+        // Utilisateur existant → générer les tokens
+        Utilisateur u = optUser.get();
+        if (!u.getActif()) throw new BadRequestException("Ce compte est désactivé");
+
+        AuthResponse auth = genererAuthResponse(u);
+        log.info("Connexion Google réussie : userId={}", u.getId());
+        auditService.log(u.getId(), u.getTelephone(), "CONNEXION_GOOGLE", true, null);
+
+        return ApiResponse.success(
+            GoogleAuthResponse.builder()
+                .nouvelUtilisateur(false)
+                .email(email)
+                .nomComplet(nomComplet)
+                .accessToken(auth.getAccessToken())
+                .refreshToken(auth.getRefreshToken())
+                .tokenType(auth.getTokenType())
+                .expiresIn(auth.getExpiresIn())
+                .pinDefini(auth.getPinDefini())
+                .utilisateur(auth.getUtilisateur())
+                .build(),
+            "Connexion réussie"
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> verifierTokenGoogle(String idToken) {
+        try {
+            String url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken;
+            Map<String, Object> payload = restTemplate.getForObject(url, Map.class);
+            if (payload == null) throw new BadRequestException("Token Google invalide");
+
+            // Vérifier que l'audience correspond à notre client Web
+            String aud = (String) payload.get("aud");
+            if (!googleClientId.equals(aud))
+                throw new BadRequestException("Token Google invalide (audience incorrecte)");
+
+            String emailVerifie = (String) payload.getOrDefault("email_verified", "false");
+            if (!"true".equals(emailVerifie))
+                throw new BadRequestException("L'adresse email Google n'est pas vérifiée");
+
+            return payload;
+        } catch (HttpClientErrorException e) {
+            throw new BadRequestException("Token Google invalide ou expiré");
+        }
     }
 
     /** SHA-256 du token — stocké en base, jamais le JWT brut. */

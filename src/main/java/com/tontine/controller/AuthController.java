@@ -84,6 +84,13 @@ public class AuthController {
         return ResponseEntity.ok(authService.rafraichirToken(request.getRefreshToken()));
     }
 
+    @PostMapping("/google")
+    @Operation(summary = "Connexion / pré-inscription via Google — vérifie l'ID token et retourne les tokens JWT si le compte existe, ou {nouvelUtilisateur:true} sinon")
+    public ResponseEntity<ApiResponse<com.tontine.dto.response.GoogleAuthResponse>> connexionGoogle(
+            @Valid @RequestBody com.tontine.dto.request.GoogleAuthRequest request) {
+        return ResponseEntity.ok(authService.connexionGoogle(request));
+    }
+
     @PostMapping("/logout")
     @Operation(summary = "Déconnexion — invalide le refresh token (JWT requis)")
     public ResponseEntity<ApiResponse<String>> logout() {

@@ -40,6 +40,7 @@ public class SecurityConfig {
             "/auth/pin/reset/demande",
             "/auth/pin/reset/confirmer",
             "/auth/refresh-token",
+            "/auth/google",
             "/paiements/webhook/**",
             "/dons/webhook/**",
             "/actuator/health",

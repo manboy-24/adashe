@@ -54,6 +54,7 @@ public class NotificationServiceImpl implements NotificationService {
     @Value("${twilio.from-number:}")  private String twilioFromNumber;
 
     @Value("${spring.mail.username:noreply@adashe.com}") private String mailFrom;
+    @Value("${mail.provider:smtp}") private String mailProvider;
 
     // ── Canal 1 : Notification en base + Push FCM ─────────────────────────────
 
@@ -170,10 +171,15 @@ public class NotificationServiceImpl implements NotificationService {
         }
     }
 
-    // ── Canal 4 : Email via JavaMailSender (Gmail SMTP) ───────────────────────
+    // ── Canal 4 : Email (console en dev, SMTP en prod) ───────────────────────
 
     @Override
     public void envoyerEmail(String email, String sujet, String corps) {
+        if ("console".equalsIgnoreCase(mailProvider)) {
+            log.info("\n========== [EMAIL-CONSOLE] ==========\nDe      : {}\nÀ       : {}\nSujet   : [Adashe] {}\n\n{}\n=====================================",
+                    mailFrom, email, sujet, corps);
+            return;
+        }
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(mailFrom);

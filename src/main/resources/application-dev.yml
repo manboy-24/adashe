@@ -51,6 +51,10 @@ jwt:
 sms:
   provider: console
 
+# ── Email : console (pas de vrai email, le contenu s'affiche dans les logs) ────
+mail:
+  provider: console
+
 # ── Logs verbeux en dev ────────────────────────────────────────────────────────
 logging:
   level:

@@ -12,4 +12,9 @@ public interface CompteWalletRepository extends JpaRepository<CompteWallet, Long
     List<CompteWallet> findByUtilisateurId(Long utilisateurId);
 
     Optional<CompteWallet> findByUtilisateurIdAndOperateur(Long utilisateurId, PaiementMode operateur);
+
+    /** Retourne les wallets actifs (actif=true, téléphone renseigné) de l'utilisateur. */
+    @org.springframework.data.jpa.repository.Query(
+        "SELECT w FROM CompteWallet w WHERE w.utilisateur.id = :userId AND w.actif = true AND w.telephone IS NOT NULL")
+    List<CompteWallet> findActifsByUtilisateurId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }

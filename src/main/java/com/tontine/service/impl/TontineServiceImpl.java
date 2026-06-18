@@ -18,6 +18,8 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -46,10 +48,12 @@ public class TontineServiceImpl implements TontineService {
     private final TirageInteretRepository tirageInteretRepository;
     private final TirageLitigeRepository tirageLitigeRepository;
     private final UtilisateurRepository utilisateurRepository;
+    private final CompteWalletRepository compteWalletRepository;
     private final NotificationService notificationService;
     private final EmailAsyncService emailAsyncService;
     private final com.tontine.util.SecurityUtil securityUtil;
     private final TirageWebSocketHandler tirageWsHandler;
+    private final VirementCommissionService virementCommissionService;
 
     // ── Création ─────────────────────────────────────────────────────────────
 
@@ -393,6 +397,11 @@ public class TontineServiceImpl implements TontineService {
                 && (tontine.getNumeroOrangeMomo() == null || tontine.getNumeroOrangeMomo().isBlank())) {
             throw new BadRequestException("Configurez au moins un numéro de paiement Mobile Money avant de démarrer");
         }
+        // L'admin doit avoir au moins un compte wallet actif pour recevoir sa commission
+        if (compteWalletRepository.findActifsByUtilisateurId(adminId).isEmpty()) {
+            throw new BadRequestException(
+                "Ajoutez et activez au moins un compte Mobile Money (MTN ou Orange) dans votre profil avant de démarrer la tontine");
+        }
 
         tontine.setStatut(com.tontine.enums.TontineStatus.ACTIVE);
         int cycleDays = switch (tontine.getFrequence()) {
@@ -732,6 +741,17 @@ public class TontineServiceImpl implements TontineService {
                     + "Date du tirage : " + tirage.getDateTirage() + "\n\n"
                     + "L'équipe Adashe";
             emailAsyncService.envoyerEmailAsync(emailBenef, sujet, corps);
+        }
+
+        // Prélever la commission après commit (même pattern que les amendes)
+        List<Long> commissionIds = virementCommissionService.creerVirementsEnAttente(tirage);
+        if (!commissionIds.isEmpty()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    virementCommissionService.effectuerVirementsAsyncParIds(commissionIds);
+                }
+            });
         }
 
         TirageResponse confirmed = toTirageResponse(tirage);

@@ -53,6 +53,8 @@ public class NotificationServiceImpl implements NotificationService {
     @Value("${twilio.api-secret:}")   private String twilioApiSecret;   // option B
     @Value("${twilio.from-number:}")  private String twilioFromNumber;
 
+    @Value("${spring.mail.username:noreply@adashe.com}") private String mailFrom;
+
     // ── Canal 1 : Notification en base + Push FCM ─────────────────────────────
 
     @Override
@@ -174,6 +176,7 @@ public class NotificationServiceImpl implements NotificationService {
     public void envoyerEmail(String email, String sujet, String corps) {
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(mailFrom);
             msg.setTo(email);
             msg.setSubject("[Adashe] " + sujet);
             msg.setText(corps + "\n\n--\nL'équipe Adashe");

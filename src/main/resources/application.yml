@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
   servlet:
     context-path: /api
   shutdown: graceful          # attend la fin des requêtes en cours avant d'arrêter
@@ -44,6 +44,12 @@ otp:
 pin:
   max-tentatives: 5
   blocage-minutes: 15
+
+# ── Google OAuth2 ─────────────────────────────────────────────────────────────
+# Web Client ID — utilisé pour vérifier les ID tokens envoyés depuis l'app Android
+# Client Secret : variable d'environnement GOOGLE_CLIENT_SECRET (jamais ici)
+google:
+  client-id: 430345444474-g8itfddq5ec4mu9fiuijvij1p43o66c6.apps.googleusercontent.com
 
 # ── Firebase ───────────────────────────────────────────────────────────────────
 firebase:

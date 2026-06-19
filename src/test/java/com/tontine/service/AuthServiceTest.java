@@ -9,6 +9,8 @@ import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
+import com.tontine.service.EmailAsyncService;
+import com.tontine.service.SmsAsyncService;
 import com.tontine.service.impl.AuthServiceImpl;
 import com.tontine.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +39,8 @@ class AuthServiceTest {
     @Mock private UserDetailsService userDetailsService;
     @Mock private NotificationService notificationService;
     @Mock private SmsAsyncService smsAsyncService;
+    @Mock private EmailAsyncService emailAsyncService;
+    @Mock private com.tontine.repository.SessionRepository sessionRepository;
     @Mock private com.tontine.service.AuditService auditService;
     @Mock private SecurityUtil securityUtil;
 

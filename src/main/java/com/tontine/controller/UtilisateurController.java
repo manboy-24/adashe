@@ -8,6 +8,8 @@ import com.tontine.entity.Utilisateur;
 import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.UtilisateurRepository;
+import com.tontine.service.AuditService;
+import com.tontine.util.ContratAdminVersion;
 import com.tontine.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -28,6 +31,7 @@ public class UtilisateurController {
 
     private final UtilisateurRepository utilisateurRepository;
     private final SecurityUtil securityUtil;
+    private final AuditService auditService;
 
     @GetMapping("/rechercher")
     @Operation(summary = "Rechercher des utilisateurs par numéro de téléphone (min 4 chiffres)")
@@ -83,6 +87,7 @@ public class UtilisateurController {
                 .avatarId(u.getAvatarId())
                 .telephoneVerifie(u.getTelephoneVerifie())
                 .pinDefini(u.getPinDefini())
+                .contratAdminAccepte(ContratAdminVersion.estAcceptee(u.getContratAdminVersion()))
                 .createdAt(u.getCreatedAt())
                 .build();
 
@@ -102,10 +107,38 @@ public class UtilisateurController {
                 .avatarId(u.getAvatarId())
                 .telephoneVerifie(u.getTelephoneVerifie())
                 .pinDefini(u.getPinDefini())
+                .contratAdminAccepte(ContratAdminVersion.estAcceptee(u.getContratAdminVersion()))
                 .createdAt(u.getCreatedAt())
                 .build();
 
         return ResponseEntity.ok(ApiResponse.success(response, "Profil"));
+    }
+
+    @PostMapping("/contrat-admin/accepter")
+    @Operation(summary = "Accepter le contrat admin (commission, amende, garde des fonds) — requis avant de créer une tontine")
+    public ResponseEntity<ApiResponse<UtilisateurResponse>> accepterContratAdmin() {
+        Long userId = securityUtil.getCurrentUserId();
+        Utilisateur u = utilisateurRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+
+        u.setContratAdminVersion(ContratAdminVersion.ACTUELLE);
+        u.setContratAdminAccepteLe(LocalDateTime.now());
+        utilisateurRepository.save(u);
+
+        auditService.log(u.getId(), u.getTelephone(), "CONTRAT_ADMIN_ACCEPTE", true,
+                "version=" + ContratAdminVersion.ACTUELLE);
+
+        UtilisateurResponse response = UtilisateurResponse.builder()
+                .id(u.getId()).nom(u.getNom()).prenom(u.getPrenom())
+                .telephone(u.getTelephone()).email(u.getEmail())
+                .avatarId(u.getAvatarId())
+                .telephoneVerifie(u.getTelephoneVerifie())
+                .pinDefini(u.getPinDefini())
+                .contratAdminAccepte(true)
+                .createdAt(u.getCreatedAt())
+                .build();
+
+        return ResponseEntity.ok(ApiResponse.success(response, "Contrat accepté"));
     }
 
     @PutMapping("/fcm-token")
@@ -129,6 +162,25 @@ public class UtilisateurController {
             utilisateurRepository.save(u);
         });
         return ResponseEntity.ok(ApiResponse.success(null, "Notifications push désactivées"));
+    }
+
+    @PatchMapping("/email")
+    @Operation(summary = "Ajouter ou modifier l'adresse email de l'utilisateur connecté")
+    public ResponseEntity<ApiResponse<String>> updateEmail(@RequestBody Map<String, String> body) {
+        String email = body.getOrDefault("email", "").trim();
+        if (email.isBlank() || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+            throw new BadRequestException("Format email invalide");
+        }
+        Long userId = securityUtil.getCurrentUserId();
+        utilisateurRepository.findByEmail(email).ifPresent(existing -> {
+            if (!existing.getId().equals(userId))
+                throw new BadRequestException("Cet email est déjà utilisé par un autre compte");
+        });
+        Utilisateur u = utilisateurRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+        u.setEmail(email);
+        utilisateurRepository.save(u);
+        return ResponseEntity.ok(ApiResponse.success(email, "Email enregistré"));
     }
 
     @PutMapping("/avatar")

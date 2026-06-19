@@ -46,7 +46,7 @@ class NotificationServiceTest {
         ReflectionTestUtils.setField(notificationService, "smsProvider",  "console");
         ReflectionTestUtils.setField(notificationService, "atApiKey",     "");
         ReflectionTestUtils.setField(notificationService, "atUsername",   "sandbox");
-        ReflectionTestUtils.setField(notificationService, "atSenderId",   "AdasheCash");
+        ReflectionTestUtils.setField(notificationService, "atSenderId",   "Adashe");
         ReflectionTestUtils.setField(notificationService, "twilioAccountSid", "");
         ReflectionTestUtils.setField(notificationService, "twilioAuthToken",  "");
         ReflectionTestUtils.setField(notificationService, "twilioApiKey",     "");

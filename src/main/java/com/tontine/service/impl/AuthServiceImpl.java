@@ -2,15 +2,19 @@ package com.tontine.service.impl;
 
 import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
+import com.tontine.entity.Session;
 import com.tontine.entity.Utilisateur;
 import com.tontine.enums.Role;
 import com.tontine.exception.*;
+import com.tontine.repository.SessionRepository;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.AuditService;
 import com.tontine.service.AuthService;
+import com.tontine.service.EmailAsyncService;
 import com.tontine.service.NotificationService;
 import com.tontine.service.SmsAsyncService;
+import com.tontine.util.ContratAdminVersion;
 import com.tontine.util.OtpUtil;
 import com.tontine.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
@@ -22,25 +26,32 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Service @RequiredArgsConstructor @Slf4j @Transactional
 public class AuthServiceImpl implements AuthService {
 
     private final UtilisateurRepository utilisateurRepository;
+    private final SessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final NotificationService notificationService;
     private final SmsAsyncService smsAsyncService;
+    private final EmailAsyncService emailAsyncService;
     private final AuditService auditService;
+    private final RestTemplate restTemplate;
 
     @Autowired
     private SecurityUtil securityUtil;
 
     @Value("${otp.expiration-minutes:5}") private int otpExpiration;
+    @Value("${google.client-id}")         private String googleClientId;
 
     // ── Inscription : téléphone + nom/prénom, pas de mot de passe ─────────────
     @Override
@@ -62,13 +73,22 @@ public class AuthServiceImpl implements AuthService {
                 .build();
         utilisateurRepository.save(u);
 
-        smsAsyncService.envoyerSmsAsync(request.getTelephone(),
-                "AdasheCash - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
+        boolean viaEmail = request.getEmail() != null && !request.getEmail().isBlank();
+        if (viaEmail) {
+            emailAsyncService.envoyerEmailAsync(
+                request.getEmail(),
+                "Adashe — Code de vérification",
+                corpsEmailOtp(otp, otpExpiration)
+            );
+        } else {
+            smsAsyncService.envoyerSmsAsync(request.getTelephone(),
+                "Adashe - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
+        }
 
-        log.info("Inscription: {} - OTP envoye", request.getTelephone());
+        log.info("Inscription: {} - OTP envoyé par {}", request.getTelephone(), viaEmail ? "email" : "SMS");
         auditService.log(null, request.getTelephone(), "INSCRIPTION", true, null);
-        return ApiResponse.success(null,
-                "Code de vérification envoyé au " + masquerTelephone(request.getTelephone()));
+        String destination = viaEmail ? masquerEmail(request.getEmail()) : masquerTelephone(request.getTelephone());
+        return ApiResponse.success(null, "Code de vérification envoyé à " + destination);
     }
 
     // ── Vérifier OTP d'inscription ──────────────────────────────────────────
@@ -112,10 +132,20 @@ public class AuthServiceImpl implements AuthService {
         u.setOtpExpiration(LocalDateTime.now().plusMinutes(otpExpiration));
         utilisateurRepository.save(u);
 
-        smsAsyncService.envoyerSmsAsync(telephone,
-                "AdasheCash - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
+        boolean viaEmail = u.getEmail() != null && !u.getEmail().isBlank();
+        if (viaEmail) {
+            emailAsyncService.envoyerEmailAsync(
+                u.getEmail(),
+                "Adashe — Nouveau code de vérification",
+                corpsEmailOtp(otp, otpExpiration)
+            );
+        } else {
+            smsAsyncService.envoyerSmsAsync(telephone,
+                "Adashe - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
+        }
 
-        return ApiResponse.success(null, "Nouveau code envoyé au " + masquerTelephone(telephone));
+        String destination = viaEmail ? masquerEmail(u.getEmail()) : masquerTelephone(telephone);
+        return ApiResponse.success(null, "Nouveau code envoyé à " + destination);
     }
 
     // ── Refresh token JWT ───────────────────────────────────────────────────
@@ -123,34 +153,59 @@ public class AuthServiceImpl implements AuthService {
     public ApiResponse<AuthResponse> rafraichirToken(String refreshToken) {
         String hash = hashToken(refreshToken);
 
-        // Cas normal : token actif trouvé
+        // ── 1. Vérifier dans la table sessions (connexions avec deviceId) ───────
+        java.util.Optional<Session> optSession = sessionRepository.findByRefreshTokenHash(hash);
+        if (optSession.isPresent()) {
+            Session session = optSession.get();
+            Utilisateur u   = session.getUtilisateur();
+            if (!Boolean.TRUE.equals(session.getActive()) || LocalDateTime.now().isAfter(session.getExpiresAt())) {
+                session.setActive(false);
+                sessionRepository.save(session);
+                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Session expirée");
+                throw new UnauthorizedException("Session expirée. Veuillez vous reconnecter.");
+            }
+            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, "device: " + session.getDeviceName());
+            return ApiResponse.success(genererAuthResponseAvecSession(u, session.getDeviceId(), session.getDeviceName()), "Token rafraîchi");
+        }
+
+        // ── 2. Replay dans sessions (token déjà consommé) ────────────────────────
+        sessionRepository.findByPreviousRefreshTokenHash(hash).ifPresent(session -> {
+            Utilisateur u = session.getUtilisateur();
+            log.warn("SECURITY — Replay session={} userId={}", session.getId(), u.getId());
+            sessionRepository.deactivateAll(u.getId());
+            u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
+            utilisateurRepository.save(u);
+            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Toutes sessions révoquées");
+            smsAsyncService.envoyerSmsAsync(u.getTelephone(),
+                    "Adashe - Sécurité : activité suspecte détectée. "
+                    + "Toutes vos sessions ont été déconnectées. "
+                    + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
+        });
+
+        // ── 3. Fallback legacy : token stocké sur l'utilisateur (sans deviceId) ──
         java.util.Optional<Utilisateur> optUser = utilisateurRepository.findByRefreshToken(hash);
         if (optUser.isPresent()) {
             Utilisateur u = optUser.get();
             if (LocalDateTime.now().isAfter(u.getRefreshTokenExpiration())) {
-                u.setRefreshToken(null);
-                u.setRefreshTokenExpiration(null);
-                u.setPreviousRefreshTokenHash(null);
+                u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
                 utilisateurRepository.save(u);
-                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Token expiré");
+                auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", false, "Token expiré (legacy)");
                 throw new UnauthorizedException("Session expirée. Veuillez vous reconnecter.");
             }
-            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, null);
+            auditService.log(u.getId(), u.getTelephone(), "REFRESH_TOKEN", true, "legacy");
             return ApiResponse.success(genererAuthResponse(u), "Token rafraîchi");
         }
 
-        // Replay détecté : le token correspond au précédent déjà consommé → vol potentiel
+        // ── 4. Replay legacy ──────────────────────────────────────────────────────
         utilisateurRepository.findByPreviousRefreshTokenHash(hash).ifPresent(u -> {
-            log.warn("SECURITY — Replay token détecté pour userId={} tel={}", u.getId(), u.getTelephone());
-            u.setRefreshToken(null);
-            u.setRefreshTokenExpiration(null);
-            u.setPreviousRefreshTokenHash(null);
+            log.warn("SECURITY — Replay token legacy userId={}", u.getId());
+            u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
             u.setFcmToken(null);
             utilisateurRepository.save(u);
-            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false,
-                    "Toutes les sessions invalidées — replay détecté");
+            sessionRepository.deactivateAll(u.getId());
+            auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Legacy — sessions révoquées");
             smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "AdasheCash - Sécurité : activité suspecte détectée. "
+                    "Adashe - Sécurité : activité suspecte détectée. "
                     + "Toutes vos sessions ont été déconnectées. "
                     + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
         });
@@ -159,17 +214,47 @@ public class AuthServiceImpl implements AuthService {
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /** Génère un AuthResponse sans créer de session (flows sans deviceId). */
     public AuthResponse genererAuthResponse(Utilisateur u) {
         UserDetails ud = userDetailsService.loadUserByUsername(u.getTelephone());
         String access  = jwtService.generateToken(ud);
         String refresh = jwtService.generateRefreshToken(ud);
 
-        // Conserver le hash actuel comme "précédent" pour détecter les replays
         u.setPreviousRefreshTokenHash(u.getRefreshToken());
         u.setRefreshToken(hashToken(refresh));
         u.setRefreshTokenExpiration(LocalDateTime.now().plusDays(7));
         utilisateurRepository.save(u);
 
+        return buildAuthResponse(u, access, refresh);
+    }
+
+    /** Génère un AuthResponse ET crée/met à jour la session pour le deviceId donné. */
+    public AuthResponse genererAuthResponseAvecSession(Utilisateur u, String deviceId, String deviceName) {
+        UserDetails ud = userDetailsService.loadUserByUsername(u.getTelephone());
+        String access  = jwtService.generateToken(ud);
+        String refresh = jwtService.generateRefreshToken(ud);
+        String hash    = hashToken(refresh);
+
+        Session session = sessionRepository
+                .findByUtilisateurIdAndDeviceIdAndActiveTrue(u.getId(), deviceId)
+                .orElse(Session.builder()
+                        .utilisateur(u)
+                        .deviceId(deviceId)
+                        .deviceName(deviceName)
+                        .active(true)
+                        .build());
+        session.setPreviousRefreshTokenHash(session.getRefreshTokenHash());
+        session.setRefreshTokenHash(hash);
+        session.setLastUsedAt(LocalDateTime.now());
+        session.setExpiresAt(LocalDateTime.now().plusDays(7));
+        session.setActive(true);
+        sessionRepository.save(session);
+
+        return buildAuthResponse(u, access, refresh);
+    }
+
+    private AuthResponse buildAuthResponse(Utilisateur u, String access, String refresh) {
         return AuthResponse.builder()
                 .accessToken(access).refreshToken(refresh)
                 .tokenType("Bearer").expiresIn(jwtService.getExpirationTime())
@@ -180,11 +265,12 @@ public class AuthServiceImpl implements AuthService {
                         .avatarId(u.getAvatarId())
                         .telephoneVerifie(u.getTelephoneVerifie())
                         .pinDefini(u.getPinDefini() != null && u.getPinDefini())
+                        .contratAdminAccepte(ContratAdminVersion.estAcceptee(u.getContratAdminVersion()))
                         .createdAt(u.getCreatedAt()).build())
                 .build();
     }
 
-    // ── Déconnexion : invalide le refresh token en base ─────────────────────
+    // ── Déconnexion : invalide le refresh token et toutes les sessions ───────
     @Override
     public ApiResponse<String> deconnecter(Long userId) {
         Long currentUserId = securityUtil.getCurrentUserId();
@@ -196,10 +282,83 @@ public class AuthServiceImpl implements AuthService {
             u.setRefreshTokenExpiration(null);
             u.setFcmToken(null);
             utilisateurRepository.save(u);
+            sessionRepository.deactivateAll(userId);
             log.info("Déconnexion: userId={}", userId);
             auditService.log(u.getId(), u.getTelephone(), "DECONNEXION", true, null);
         });
         return ApiResponse.success(null, "Déconnecté avec succès");
+    }
+
+    // ── Connexion / inscription via Google ──────────────────────────────────
+    @Override
+    public ApiResponse<GoogleAuthResponse> connexionGoogle(GoogleAuthRequest request) {
+        // Vérifier le token auprès de Google (évite d'ajouter google-api-client)
+        Map<String, Object> payload = verifierTokenGoogle(request.getIdToken());
+
+        String email    = (String) payload.get("email");
+        String prenom   = (String) payload.getOrDefault("given_name",  "");
+        String nom      = (String) payload.getOrDefault("family_name", prenom);
+        String nomComplet = (prenom + " " + nom).trim();
+
+        java.util.Optional<Utilisateur> optUser = utilisateurRepository.findByEmail(email);
+
+        if (optUser.isEmpty()) {
+            // Nouvel utilisateur — l'app mobile doit demander le numéro de téléphone
+            log.info("Connexion Google : nouvel utilisateur {}", email);
+            return ApiResponse.success(
+                GoogleAuthResponse.builder()
+                    .nouvelUtilisateur(true)
+                    .email(email)
+                    .nomComplet(nomComplet)
+                    .build(),
+                "Compte non trouvé — veuillez compléter votre inscription"
+            );
+        }
+
+        // Utilisateur existant → générer les tokens
+        Utilisateur u = optUser.get();
+        if (!u.getActif()) throw new BadRequestException("Ce compte est désactivé");
+
+        AuthResponse auth = genererAuthResponse(u);
+        log.info("Connexion Google réussie : userId={}", u.getId());
+        auditService.log(u.getId(), u.getTelephone(), "CONNEXION_GOOGLE", true, null);
+
+        return ApiResponse.success(
+            GoogleAuthResponse.builder()
+                .nouvelUtilisateur(false)
+                .email(email)
+                .nomComplet(nomComplet)
+                .accessToken(auth.getAccessToken())
+                .refreshToken(auth.getRefreshToken())
+                .tokenType(auth.getTokenType())
+                .expiresIn(auth.getExpiresIn())
+                .pinDefini(auth.getPinDefini())
+                .utilisateur(auth.getUtilisateur())
+                .build(),
+            "Connexion réussie"
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> verifierTokenGoogle(String idToken) {
+        try {
+            String url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken;
+            Map<String, Object> payload = restTemplate.getForObject(url, Map.class);
+            if (payload == null) throw new BadRequestException("Token Google invalide");
+
+            // Vérifier que l'audience correspond à notre client Web
+            String aud = (String) payload.get("aud");
+            if (!googleClientId.equals(aud))
+                throw new BadRequestException("Token Google invalide (audience incorrecte)");
+
+            String emailVerifie = (String) payload.getOrDefault("email_verified", "false");
+            if (!"true".equals(emailVerifie))
+                throw new BadRequestException("L'adresse email Google n'est pas vérifiée");
+
+            return payload;
+        } catch (HttpClientErrorException e) {
+            throw new BadRequestException("Token Google invalide ou expiré");
+        }
     }
 
     /** SHA-256 du token — stocké en base, jamais le JWT brut. */
@@ -218,5 +377,25 @@ public class AuthServiceImpl implements AuthService {
     private String masquerTelephone(String tel) {
         if (tel == null || tel.length() < 4) return "****";
         return tel.substring(0, tel.length() - 4).replaceAll("\\d", "*") + tel.substring(tel.length() - 4);
+    }
+
+    private String masquerEmail(String email) {
+        if (email == null || !email.contains("@")) return "****";
+        String[] parts = email.split("@");
+        String local  = parts[0];
+        String domain = parts[1];
+        String masque = local.length() <= 2
+            ? local.charAt(0) + "***"
+            : local.substring(0, 2) + "*".repeat(Math.min(local.length() - 2, 4));
+        return masque + "@" + domain;
+    }
+
+    private String corpsEmailOtp(String otp, int expirationMinutes) {
+        return "Bonjour,\n\n"
+            + "Votre code de vérification Adashe est :\n\n"
+            + "    " + otp + "\n\n"
+            + "Ce code est valable " + expirationMinutes + " minutes.\n\n"
+            + "Si vous n'avez pas demandé ce code, ignorez cet email.\n\n"
+            + "— L'équipe Adashe";
     }
 }

@@ -12,15 +12,17 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
-@Tag(name = "Authentification", description = "Inscription, connexion PIN, reset PIN")
+@Tag(name = "Authentification", description = "Inscription, connexion PIN, reset PIN, gestion sessions")
 public class AuthController {
 
     private final AuthService authService;
     private final PinAuthService pinAuthService;
-    private final SecurityUtil securityUtil;  // Bean injecté, plus statique
+    private final SecurityUtil securityUtil;
 
     @PostMapping("/inscrire")
     @Operation(summary = "S'inscrire — envoie un OTP par SMS")
@@ -42,6 +44,13 @@ public class AuthController {
         return ResponseEntity.ok(authService.renvoyerOtp(telephone));
     }
 
+    @PostMapping("/pin/verifier")
+    @Operation(summary = "Vérifie le PIN de l'utilisateur connecté (sans échange de tokens)")
+    public ResponseEntity<ApiResponse<String>> verifierPin(
+            @Valid @RequestBody VerifierPinRequest request) {
+        return ResponseEntity.ok(pinAuthService.verifierPin(request.getPin(), securityUtil.getCurrentUserId()));
+    }
+
     @PostMapping("/pin/creer")
     @Operation(summary = "Créer son PIN 4 chiffres (après OTP vérifié)")
     public ResponseEntity<ApiResponse<AuthResponse>> creerPin(
@@ -50,10 +59,39 @@ public class AuthController {
     }
 
     @PostMapping("/pin/connexion")
-    @Operation(summary = "Connexion téléphone + PIN")
-    public ResponseEntity<ApiResponse<AuthResponse>> connecterAvecPin(
+    @Operation(summary = "Connexion téléphone + PIN — renvoie action=CONNECTE ou NOUVEL_APPAREIL_OTP")
+    public ResponseEntity<ApiResponse<ConnexionPinResponse>> connecterAvecPin(
             @Valid @RequestBody ConnexionPinRequest request) {
         return ResponseEntity.ok(pinAuthService.connecterAvecPin(request));
+    }
+
+    @PostMapping("/sessions/confirmer")
+    @Operation(summary = "Confirmer la connexion depuis un nouvel appareil via OTP")
+    public ResponseEntity<ApiResponse<ConnexionPinResponse>> confirmerNouvelAppareil(
+            @Valid @RequestBody ConfirmerNouvelAppareilRequest request) {
+        return ResponseEntity.ok(pinAuthService.confirmerNouvelAppareil(request));
+    }
+
+    @GetMapping("/sessions")
+    @Operation(summary = "Lister les sessions actives de l'utilisateur connecté")
+    public ResponseEntity<List<SessionResponse>> listerSessions(
+            @RequestParam(required = false) String deviceId) {
+        Long userId = securityUtil.getCurrentUserId();
+        return ResponseEntity.ok(pinAuthService.listerSessions(userId, deviceId != null ? deviceId : ""));
+    }
+
+    @DeleteMapping("/sessions/{id}")
+    @Operation(summary = "Révoquer une session spécifique")
+    public ResponseEntity<ApiResponse<String>> revoquerSession(@PathVariable Long id) {
+        return ResponseEntity.ok(pinAuthService.revoquerSession(id, securityUtil.getCurrentUserId()));
+    }
+
+    @DeleteMapping("/sessions")
+    @Operation(summary = "Révoquer toutes les sessions sauf la courante")
+    public ResponseEntity<ApiResponse<String>> revoquerToutesLesSessions(
+            @RequestParam(required = false) Long exceptSessionId) {
+        return ResponseEntity.ok(
+                pinAuthService.revoquerToutesLesSessions(securityUtil.getCurrentUserId(), exceptSessionId));
     }
 
     @PostMapping("/pin/reset/demande")
@@ -77,8 +115,15 @@ public class AuthController {
         return ResponseEntity.ok(authService.rafraichirToken(request.getRefreshToken()));
     }
 
+    @PostMapping("/google")
+    @Operation(summary = "Connexion / pré-inscription via Google")
+    public ResponseEntity<ApiResponse<com.tontine.dto.response.GoogleAuthResponse>> connexionGoogle(
+            @Valid @RequestBody com.tontine.dto.request.GoogleAuthRequest request) {
+        return ResponseEntity.ok(authService.connexionGoogle(request));
+    }
+
     @PostMapping("/logout")
-    @Operation(summary = "Déconnexion — invalide le refresh token (JWT requis)")
+    @Operation(summary = "Déconnexion — révoque toutes les sessions et le refresh token")
     public ResponseEntity<ApiResponse<String>> logout() {
         return ResponseEntity.ok(authService.deconnecter(securityUtil.getCurrentUserId()));
     }

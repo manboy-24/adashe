@@ -44,7 +44,7 @@ public class NotificationServiceImpl implements NotificationService {
     // Africa's Talking
     @Value("${africastalking.api-key:}")      private String atApiKey;
     @Value("${africastalking.username:sandbox}") private String atUsername;
-    @Value("${africastalking.sender-id:AdasheCash}") private String atSenderId;
+    @Value("${africastalking.sender-id:Adashe}") private String atSenderId;
 
     // Twilio
     @Value("${twilio.account-sid:}")  private String twilioAccountSid;
@@ -52,6 +52,9 @@ public class NotificationServiceImpl implements NotificationService {
     @Value("${twilio.api-key:}")      private String twilioApiKey;      // option B
     @Value("${twilio.api-secret:}")   private String twilioApiSecret;   // option B
     @Value("${twilio.from-number:}")  private String twilioFromNumber;
+
+    @Value("${spring.mail.username:noreply@adashe.com}") private String mailFrom;
+    @Value("${mail.provider:smtp}") private String mailProvider;
 
     // ── Canal 1 : Notification en base + Push FCM ─────────────────────────────
 
@@ -168,12 +171,18 @@ public class NotificationServiceImpl implements NotificationService {
         }
     }
 
-    // ── Canal 4 : Email via JavaMailSender (Gmail SMTP) ───────────────────────
+    // ── Canal 4 : Email (console en dev, SMTP en prod) ───────────────────────
 
     @Override
     public void envoyerEmail(String email, String sujet, String corps) {
+        if ("console".equalsIgnoreCase(mailProvider)) {
+            log.info("\n========== [EMAIL-CONSOLE] ==========\nDe      : {}\nÀ       : {}\nSujet   : [Adashe] {}\n\n{}\n=====================================",
+                    mailFrom, email, sujet, corps);
+            return;
+        }
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(mailFrom);
             msg.setTo(email);
             msg.setSubject("[Adashe] " + sujet);
             msg.setText(corps + "\n\n--\nL'équipe Adashe");

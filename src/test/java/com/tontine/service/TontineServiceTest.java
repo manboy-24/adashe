@@ -5,6 +5,7 @@ import com.tontine.dto.request.TirageRequest;
 import com.tontine.dto.request.TontineRequest;
 import com.tontine.dto.response.CotisationResponse;
 import com.tontine.dto.response.TirageResponse;
+import com.tontine.dto.response.TirageLitigeResponse;
 import com.tontine.dto.response.TontineResponse;
 import com.tontine.entity.*;
 import com.tontine.enums.*;
@@ -29,6 +30,7 @@ import com.tontine.dto.response.MembreResponse;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.*;
@@ -42,10 +44,15 @@ class TontineServiceTest {
     @Mock private MembreTontineRepository membreRepository;
     @Mock private CotisationRepository cotisationRepository;
     @Mock private TirageRepository tirageRepository;
+    @Mock private com.tontine.repository.TirageInteretRepository tirageInteretRepository;
+    @Mock private com.tontine.repository.TirageLitigeRepository tirageLitigeRepository;
     @Mock private UtilisateurRepository utilisateurRepository;
+    @Mock private com.tontine.repository.CompteWalletRepository compteWalletRepository;
+    @Mock private com.tontine.service.impl.VirementCommissionService virementCommissionService;
     @Mock private NotificationService notificationService;
     @Mock private EmailAsyncService emailAsyncService;
     @Mock private SecurityUtil securityUtil;
+    @Mock private com.tontine.websocket.TirageWebSocketHandler tirageWsHandler;
 
     @InjectMocks
     private TontineServiceImpl tontineService;
@@ -59,7 +66,9 @@ class TontineServiceTest {
         createur = Utilisateur.builder()
                 .id(1L).nom("Dupont").prenom("Jean")
                 .telephone("699000001").email("jean@test.cm")
-                .role(Role.USER).build();
+                .role(Role.USER)
+                .contratAdminVersion(com.tontine.util.ContratAdminVersion.ACTUELLE)
+                .build();
 
         tontine = Tontine.builder()
                 .id(10L).nom("Ma Tontine")
@@ -141,6 +150,26 @@ class TontineServiceTest {
         verify(membreRepository).save(argThat(m -> m.getOrdreTour() == null));
     }
 
+    @Test
+    void creerTontine_contrat_admin_non_accepte_leve_exception() {
+        createur.setContratAdminVersion(null);   // jamais accepté
+
+        TontineRequest request = new TontineRequest();
+        request.setNom("Ma Tontine");
+        request.setMontantContribution(new BigDecimal("5000"));
+        request.setFrequence(FrequenceType.MENSUEL);
+        request.setTypeTirage(TirageType.RANDOM);
+        request.setDateDebut(LocalDate.now().plusDays(7));
+
+        when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
+
+        assertThatThrownBy(() -> tontineService.creerTontine(request, 1L))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("conditions administrateur");
+
+        verify(tontineRepository, never()).save(any());
+    }
+
     // ── demarrerTontine ───────────────────────────────────────────────────────
 
     @Test
@@ -161,6 +190,7 @@ class TontineServiceTest {
         when(cotisationRepository.sumMontantPayeByTontineId(anyLong())).thenReturn(null);
         when(membreRepository.findByTontineIdAndStatutMembreNot(anyLong(), any())).thenReturn(List.of(membreCreateur, m2));
         when(securityUtil.getCurrentUserId()).thenReturn(1L);
+        when(compteWalletRepository.findActifsByUtilisateurId(anyLong())).thenReturn(List.of(new com.tontine.entity.CompteWallet()));
 
         TontineResponse response = tontineService.demarrerTontine(10L, 1L);
 
@@ -246,8 +276,15 @@ class TontineServiceTest {
 
         assertThat(response).isNotNull();
         assertThat(response.getBeneficiaireId()).isEqualTo(101L);
-        // Le tirage est créé en état "en attente" (confirme=false) : ni notifications ni email à ce stade
-        verify(tirageRepository).save(argThat(t -> !Boolean.TRUE.equals(t.getConfirme())));
+        // Le tirage est créé en état "en attente de confirmation admin" (confirme=false)
+        // ET "en attente de réponse du gagnant" (statutAcceptation=EN_ATTENTE, 15 min).
+        verify(tirageRepository).save(argThat(t ->
+                !Boolean.TRUE.equals(t.getConfirme())
+                && t.getStatutAcceptation() == TirageAcceptationStatut.EN_ATTENTE
+                && t.getDateExpirationReponse() != null));
+        // Les notifications (gagnant + autres membres) partent dès le tirage —
+        // c'est aussi le départ du délai de réponse du gagnant.
+        verify(notificationService, atLeastOnce()).creerNotification(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -300,8 +337,10 @@ class TontineServiceTest {
 
         tontineService.effectuerTirage(10L, new TirageRequest(), 1L);
 
-        // Email envoyé uniquement à la confirmation (confirmerTirage), pas ici
+        // L'email n'est envoyé qu'à la confirmation (confirmerTirage), pas ici —
+        // contrairement à la notification in-app/push qui part dès le tirage.
         verify(tirageRepository).save(argThat(t -> !Boolean.TRUE.equals(t.getConfirme())));
+        verify(emailAsyncService, never()).envoyerEmailAsync(any(), any(), any());
     }
 
     @Test
@@ -324,6 +363,362 @@ class TontineServiceTest {
         assertThatThrownBy(() -> tontineService.effectuerTirage(10L, new TirageRequest(), 1L))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("1 membre(s)");
+    }
+
+    // ── repondreTirage (fenêtre de 15 min) ──────────────────────────────────────
+
+    private Tirage tirageEnAttenteReponse(Utilisateur gagnantUser, MembreTontine gagnantMembre) {
+        return Tirage.builder()
+                .id(50L).tontine(tontine).beneficiaire(gagnantMembre).effectuePar(createur)
+                .numeroCycle(1).montantDistribue(new BigDecimal("9900"))
+                .commissionPrelevee(new BigDecimal("100"))
+                .methodeTirage(TirageType.RANDOM).dateTirage(LocalDate.now())
+                .confirme(false)
+                .statutAcceptation(TirageAcceptationStatut.EN_ATTENTE)
+                .dateExpirationReponse(LocalDateTime.now().plusMinutes(15))
+                .build();
+    }
+
+    @Test
+    void repondreTirage_acceptation_explicite_succes() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(tirageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TirageResponse response = tontineService.repondreTirage(10L, 50L, 2L, true);
+
+        assertThat(response.getStatutAcceptation()).isEqualTo(TirageAcceptationStatut.ACCEPTE);
+        verify(notificationService, never()).creerNotification(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void repondreTirage_declin_reinitialise_eligibilite_et_notifie_admin() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true)
+                .aCagnotteSurCycleActuel(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(tirageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TirageResponse response = tontineService.repondreTirage(10L, 50L, 2L, false);
+
+        assertThat(response.getStatutAcceptation()).isEqualTo(TirageAcceptationStatut.DECLINE);
+        verify(membreRepository).save(argThat(m -> !Boolean.TRUE.equals(m.getACagnotteSurCycleActuel())));
+        verify(notificationService).creerNotification(eq(createur), eq(tontine), any(), any(), any());
+    }
+
+    @Test
+    void repondreTirage_utilisateur_non_beneficiaire_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.repondreTirage(10L, 50L, 1L, true))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void repondreTirage_deja_repondu_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.ACCEPTE);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.repondreTirage(10L, 50L, 2L, false))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    // ── confirmerTirage (garde-fous sur l'acceptation du gagnant) ───────────────
+
+    @Test
+    void confirmerTirage_statut_en_attente_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.confirmerTirage(10L, 50L, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("15 minutes");
+    }
+
+    @Test
+    void confirmerTirage_statut_decline_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.DECLINE);
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.confirmerTirage(10L, 50L, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("remplaçant");
+    }
+
+    @Test
+    void confirmerTirage_statut_accepte_succes() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.ACCEPTE);
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(tirageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of());
+        when(virementCommissionService.creerVirementsEnAttente(any())).thenReturn(List.of());
+
+        TirageResponse response = tontineService.confirmerTirage(10L, 50L, 1L);
+
+        assertThat(response.getConfirme()).isTrue();
+        verify(notificationService).creerNotification(eq(gagnantUser), eq(tontine), any(), any(), any());
+    }
+
+    // ── exprimerInteret / getInteresses / choisirRemplacant ─────────────────────
+
+    @Test
+    void exprimerInteret_premiere_inscription_sauvegarde() {
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageInteretRepository.findByTontineIdAndNumeroCycleAndMembreId(10L, 1, 100L))
+                .thenReturn(Optional.empty());
+
+        ApiResponse<String> response = tontineService.exprimerInteret(10L, 1L, true);
+
+        assertThat(response.isSuccess()).isTrue();
+        verify(tirageInteretRepository).save(any(TirageInteret.class));
+    }
+
+    @Test
+    void exprimerInteret_deja_inscrit_ne_duplique_pas() {
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageInteretRepository.findByTontineIdAndNumeroCycleAndMembreId(10L, 1, 100L))
+                .thenReturn(Optional.of(TirageInteret.builder().id(1L).build()));
+
+        tontineService.exprimerInteret(10L, 1L, true);
+
+        verify(tirageInteretRepository, never()).save(any());
+    }
+
+    @Test
+    void exprimerInteret_retrait_supprime() {
+        when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+
+        tontineService.exprimerInteret(10L, 1L, false);
+
+        verify(tirageInteretRepository).deleteByTontineIdAndNumeroCycleAndMembreId(10L, 1, 100L);
+    }
+
+    @Test
+    void choisirRemplacant_sur_tirage_non_decline_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.choisirRemplacant(10L, 50L, 102L, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("décliné");
+    }
+
+    @Test
+    void choisirRemplacant_membre_non_eligible_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.DECLINE);
+
+        Utilisateur remplacantUser = Utilisateur.builder().id(3L).nom("Koffi").prenom("Awa").telephone("699000003").build();
+        MembreTontine remplacant = MembreTontine.builder()
+                .id(102L).utilisateur(remplacantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(membreRepository.findById(102L)).thenReturn(Optional.of(remplacant));
+        when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of()); // remplaçant non éligible
+
+        assertThatThrownBy(() -> tontineService.choisirRemplacant(10L, 50L, 102L, 1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("éligible");
+    }
+
+    @Test
+    void choisirRemplacant_succes_relance_fenetre_de_reponse() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.DECLINE);
+
+        Utilisateur remplacantUser = Utilisateur.builder().id(3L).nom("Koffi").prenom("Awa").telephone("699000003").build();
+        MembreTontine remplacant = MembreTontine.builder()
+                .id(102L).utilisateur(remplacantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(membreRepository.findById(102L)).thenReturn(Optional.of(remplacant));
+        when(membreRepository.findEligiblesPourTirage(10L)).thenReturn(List.of(remplacant));
+        when(tirageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(membreRepository.findByTontineIdAndActifTrue(10L)).thenReturn(List.of(membreCreateur, remplacant));
+
+        TirageResponse response = tontineService.choisirRemplacant(10L, 50L, 102L, 1L);
+
+        assertThat(response.getBeneficiaireId()).isEqualTo(102L);
+        assertThat(response.getStatutAcceptation()).isEqualTo(TirageAcceptationStatut.EN_ATTENTE);
+        verify(membreRepository).save(argThat(m -> Boolean.TRUE.equals(m.getACagnotteSurCycleActuel())));
+        verify(notificationService, atLeastOnce()).creerNotification(any(), any(), any(), any(), any());
+    }
+
+    // ── signalerLitige / getLitiges / resoudreLitige ────────────────────────────
+
+    @Test
+    void signalerLitige_succes_passe_le_tirage_en_litige() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(membreRepository.existsByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(true);
+        when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
+        when(tirageLitigeRepository.save(any())).thenAnswer(inv -> {
+            TirageLitige l = inv.getArgument(0);
+            l.setId(1L);
+            return l;
+        });
+
+        TirageLitigeResponse response = tontineService.signalerLitige(10L, 50L, 1L, "Tirage suspect");
+
+        assertThat(response.getStatut()).isEqualTo(LitigeStatut.EN_COURS);
+        verify(tirageRepository).save(argThat(t -> Boolean.TRUE.equals(t.getEnLitige())));
+        verify(notificationService).creerNotification(eq(createur), eq(tontine), any(), any(), any());
+    }
+
+    @Test
+    void signalerLitige_deja_en_litige_leve_exception() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setEnLitige(true);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(membreRepository.existsByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(true);
+
+        assertThatThrownBy(() -> tontineService.signalerLitige(10L, 50L, 1L, "Encore un souci"))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void resoudreLitige_confirme_invalide_le_tirage_et_le_marque_decline() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setEnLitige(true);
+
+        TirageLitige litige = TirageLitige.builder()
+                .id(1L).tirage(tirage).signalePar(createur).motif("Tirage suspect")
+                .statut(LitigeStatut.EN_COURS).build();
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(tirageLitigeRepository.findByIdAndTirageId(1L, 50L)).thenReturn(Optional.of(litige));
+        when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
+        when(tirageLitigeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(membreRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TirageLitigeResponse response = tontineService.resoudreLitige(10L, 50L, 1L, true, "Vérifié, problème réel", 1L);
+
+        assertThat(response.getStatut()).isEqualTo(LitigeStatut.CONFIRME);
+        assertThat(tirage.getEnLitige()).isFalse();
+        assertThat(tirage.getStatutAcceptation()).isEqualTo(TirageAcceptationStatut.DECLINE);
+        verify(membreRepository).save(argThat(m -> !Boolean.TRUE.equals(m.getACagnotteSurCycleActuel())));
+    }
+
+    @Test
+    void resoudreLitige_rejete_ne_touche_pas_au_statutAcceptation() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setEnLitige(true);
+
+        TirageLitige litige = TirageLitige.builder()
+                .id(1L).tirage(tirage).signalePar(createur).motif("Fausse alerte")
+                .statut(LitigeStatut.EN_COURS).build();
+
+        when(membreRepository.findByUtilisateurIdAndTontineId(1L, 10L)).thenReturn(Optional.of(membreCreateur));
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+        when(tirageLitigeRepository.findByIdAndTirageId(1L, 50L)).thenReturn(Optional.of(litige));
+        when(utilisateurRepository.findById(1L)).thenReturn(Optional.of(createur));
+        when(tirageLitigeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TirageLitigeResponse response = tontineService.resoudreLitige(10L, 50L, 1L, false, null, 1L);
+
+        assertThat(response.getStatut()).isEqualTo(LitigeStatut.REJETE);
+        assertThat(tirage.getEnLitige()).isFalse();
+        assertThat(tirage.getStatutAcceptation()).isEqualTo(TirageAcceptationStatut.EN_ATTENTE);
+        verify(membreRepository, never()).save(any());
+    }
+
+    @Test
+    void repondreTirage_bloque_si_tirage_en_litige() {
+        Utilisateur gagnantUser = Utilisateur.builder().id(2L).nom("Martin").prenom("Alice").telephone("699000002").build();
+        MembreTontine gagnant = MembreTontine.builder()
+                .id(101L).utilisateur(gagnantUser).tontine(tontine)
+                .statutMembre(MembreStatut.ACTIF).actif(true).build();
+        Tirage tirage = tirageEnAttenteReponse(gagnantUser, gagnant);
+        tirage.setEnLitige(true);
+
+        when(tirageRepository.findByIdAndTontineId(50L, 10L)).thenReturn(Optional.of(tirage));
+
+        assertThatThrownBy(() -> tontineService.repondreTirage(10L, 50L, 2L, true))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("signalement");
     }
 
     // ── enregistrerCotisation ─────────────────────────────────────────────────

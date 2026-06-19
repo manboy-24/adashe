@@ -18,6 +18,8 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -36,15 +38,22 @@ public class TontineServiceImpl implements TontineService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
+    /** Délai laissé au gagnant pour répondre avant qu'on considère son silence comme une acceptation. */
+    public static final int FENETRE_REPONSE_MINUTES = 15;
+
     private final TontineRepository tontineRepository;
     private final MembreTontineRepository membreRepository;
     private final CotisationRepository cotisationRepository;
     private final TirageRepository tirageRepository;
+    private final TirageInteretRepository tirageInteretRepository;
+    private final TirageLitigeRepository tirageLitigeRepository;
     private final UtilisateurRepository utilisateurRepository;
+    private final CompteWalletRepository compteWalletRepository;
     private final NotificationService notificationService;
     private final EmailAsyncService emailAsyncService;
     private final com.tontine.util.SecurityUtil securityUtil;
     private final TirageWebSocketHandler tirageWsHandler;
+    private final VirementCommissionService virementCommissionService;
 
     // ── Création ─────────────────────────────────────────────────────────────
 
@@ -52,6 +61,13 @@ public class TontineServiceImpl implements TontineService {
     public TontineResponse creerTontine(TontineRequest request, Long createurId) {
         Utilisateur createur = utilisateurRepository.findById(createurId)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+
+        // Garde-fou défense-en-profondeur : le client mobile vérifie déjà ce flag
+        // (UtilisateurResponse.contratAdminAccepte) avant même d'afficher le
+        // formulaire de création, mais on le revérifie ici au cas où.
+        if (!com.tontine.util.ContratAdminVersion.estAcceptee(createur.getContratAdminVersion())) {
+            throw new ForbiddenException("Vous devez accepter les conditions administrateur avant de créer une tontine");
+        }
 
         Tontine tontine = Tontine.builder()
                 .nom(request.getNom())
@@ -214,6 +230,8 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Vous êtes déjà membre de cette tontine");
         }
 
+        verifierWalletMobileMoney(userId);
+
         AjoutMembreRequest req = new AjoutMembreRequest();
         req.setUtilisateurId(userId);
         ajouterMembre(tontine.getId(), req, tontine.getCreateur().getId());
@@ -235,6 +253,8 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Votre invitation a été annulée");
         }
 
+        verifierWalletMobileMoney(userId);
+
         membre.setStatutMembre(MembreStatut.ACTIF);
         membre.setActif(true);
         membreRepository.save(membre);
@@ -254,7 +274,7 @@ public class TontineServiceImpl implements TontineService {
                     + "Vous avez rejoint la tontine \"" + t.getNom() + "\".\n\n"
                     + "Montant de cotisation : " + t.getMontantContribution() + " " + t.getDevise()
                     + "\nFréquence : " + t.getFrequence().name().toLowerCase() + "\n\n"
-                    + "Bonne tontine !\nL'équipe AdasheCash");
+                    + "Bonne tontine !\nL'équipe Adashe");
         }
 
         return ApiResponse.success(null, "Invitation acceptée — vous êtes maintenant membre de " + membre.getTontine().getNom());
@@ -380,6 +400,11 @@ public class TontineServiceImpl implements TontineService {
         if ((tontine.getNumeroMtnMomo() == null || tontine.getNumeroMtnMomo().isBlank())
                 && (tontine.getNumeroOrangeMomo() == null || tontine.getNumeroOrangeMomo().isBlank())) {
             throw new BadRequestException("Configurez au moins un numéro de paiement Mobile Money avant de démarrer");
+        }
+        // L'admin doit avoir au moins un compte wallet actif pour recevoir sa commission
+        if (compteWalletRepository.findActifsByUtilisateurId(adminId).isEmpty()) {
+            throw new BadRequestException(
+                "Ajoutez et activez au moins un compte Mobile Money (MTN ou Orange) dans votre profil avant de démarrer la tontine");
         }
 
         tontine.setStatut(com.tontine.enums.TontineStatus.ACTIVE);
@@ -583,8 +608,10 @@ public class TontineServiceImpl implements TontineService {
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         BigDecimal cagnotte = brut.subtract(commission);
 
-        // Le tirage est créé en attente de validation admin (confirme = false).
-        // Le cycle n'avance et les notifications ne partent qu'à la confirmation.
+        // Le tirage est créé en attente de validation admin (confirme = false) ET
+        // en attente de réponse du gagnant (statutAcceptation = EN_ATTENTE) : il a
+        // FENETRE_REPONSE_MINUTES pour accepter ou décliner avant que le scheduler
+        // ne considère son silence comme une acceptation implicite.
         Tirage tirage = Tirage.builder()
                 .tontine(tontine)
                 .beneficiaire(beneficiaire)
@@ -595,6 +622,7 @@ public class TontineServiceImpl implements TontineService {
                 .methodeTirage(tontine.getTypeTirage())
                 .dateTirage(LocalDate.now())
                 .confirme(false)
+                .dateExpirationReponse(LocalDateTime.now().plusMinutes(FENETRE_REPONSE_MINUTES))
                 .commentaire(request.getCommentaire())
                 .build();
 
@@ -602,9 +630,61 @@ public class TontineServiceImpl implements TontineService {
         beneficiaire.setACagnotteSurCycleActuel(true);
         membreRepository.save(beneficiaire);
 
+        // Notifications immédiates — c'est aussi le départ du délai de réponse du gagnant.
+        notifierTirage(tontine, beneficiaire, cagnotte);
+
         TirageResponse response = toTirageResponse(tirage);
         // Notifier les membres en temps réel — la roue commence à tourner sur leurs écrans
         tirageWsHandler.broadcast(tontineId, new TirageWsEvent("TIRAGE_LANCE", response));
+        return response;
+    }
+
+    @Override
+    @CacheEvict(value = "statistiques", key = "#tontineId")
+    public TirageResponse repondreTirage(Long tontineId, Long tirageId, Long userId, boolean accepte) {
+        Tirage tirage = tirageRepository.findByIdAndTontineId(tirageId, tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tirage non trouvé"));
+
+        if (!tirage.getBeneficiaire().getUtilisateur().getId().equals(userId)) {
+            throw new ForbiddenException("Seul le bénéficiaire désigné peut répondre à ce tirage");
+        }
+        if (tirage.getStatutAcceptation() != TirageAcceptationStatut.EN_ATTENTE) {
+            throw new BadRequestException("Ce tirage a déjà reçu une réponse");
+        }
+        if (Boolean.TRUE.equals(tirage.getConfirme())) {
+            throw new BadRequestException("Ce tirage est déjà confirmé");
+        }
+        if (Boolean.TRUE.equals(tirage.getEnLitige())) {
+            throw new BadRequestException("Ce tirage fait l'objet d'un signalement en cours d'examen");
+        }
+
+        Tontine tontine = tirage.getTontine();
+        Utilisateur gagnant = tirage.getBeneficiaire().getUtilisateur();
+
+        if (accepte) {
+            tirage.setStatutAcceptation(TirageAcceptationStatut.ACCEPTE);
+            tirageRepository.save(tirage);
+            log.info("Tirage {} accepté explicitement par userId={}", tirageId, userId);
+        } else {
+            tirage.setStatutAcceptation(TirageAcceptationStatut.DECLINE);
+            tirageRepository.save(tirage);
+
+            MembreTontine beneficiaire = tirage.getBeneficiaire();
+            beneficiaire.setACagnotteSurCycleActuel(false);
+            membreRepository.save(beneficiaire);
+
+            notificationService.creerNotification(tontine.getCreateur(), tontine,
+                    "🙋 Cagnotte déclinée — " + tontine.getNom(),
+                    gagnant.getPrenom() + " " + gagnant.getNom()
+                            + " a décliné sa cagnotte pour ce cycle. Choisissez un remplaçant.",
+                    NotificationType.TIRAGE_EFFECTUE);
+
+            log.info("Tirage {} décliné par userId={}", tirageId, userId);
+        }
+
+        TirageResponse response = toTirageResponse(tirage);
+        tirageWsHandler.broadcast(tontineId, new TirageWsEvent(
+                accepte ? "TIRAGE_ACCEPTE" : "TIRAGE_DECLINE", response));
         return response;
     }
 
@@ -618,6 +698,15 @@ public class TontineServiceImpl implements TontineService {
 
         if (Boolean.TRUE.equals(tirage.getConfirme())) {
             throw new BadRequestException("Ce tirage est déjà confirmé");
+        }
+        if (tirage.getStatutAcceptation() == TirageAcceptationStatut.EN_ATTENTE) {
+            throw new BadRequestException("Le bénéficiaire n'a pas encore répondu (15 minutes de délai)");
+        }
+        if (tirage.getStatutAcceptation() == TirageAcceptationStatut.DECLINE) {
+            throw new BadRequestException("Ce bénéficiaire a décliné sa cagnotte — choisissez un remplaçant avant de confirmer");
+        }
+        if (Boolean.TRUE.equals(tirage.getEnLitige())) {
+            throw new BadRequestException("Ce tirage fait l'objet d'un signalement en cours d'examen");
         }
 
         tirage.setConfirme(true);
@@ -637,8 +726,13 @@ public class TontineServiceImpl implements TontineService {
         }
         tontineRepository.save(tontine);
 
-        // Notifications push
-        notifierTirage(tontine, beneficiaire, cagnotte);
+        // Notification ciblée : le tirage a déjà été annoncé à tout le monde dans
+        // effectuerTirage() — ici on informe seulement le bénéficiaire que c'est
+        // désormais confirmé (le cycle a avancé).
+        notificationService.creerNotification(beneficiaire.getUtilisateur(), tontine,
+                "✅ Cagnotte confirmée — " + tontine.getNom(),
+                "Votre cagnotte de " + cagnotte + " " + tontine.getDevise() + " a été confirmée par l'administrateur.",
+                NotificationType.TIRAGE_BENEFICIAIRE);
 
         // Email au bénéficiaire si email renseigné
         String emailBenef = beneficiaire.getUtilisateur().getEmail();
@@ -649,8 +743,19 @@ public class TontineServiceImpl implements TontineService {
                     + tirage.getNumeroCycle() + " de la tontine \"" + tontine.getNom() + "\".\n\n"
                     + "Montant de la cagnotte : " + cagnotte + " " + tontine.getDevise() + "\n"
                     + "Date du tirage : " + tirage.getDateTirage() + "\n\n"
-                    + "L'équipe AdasheCash";
+                    + "L'équipe Adashe";
             emailAsyncService.envoyerEmailAsync(emailBenef, sujet, corps);
+        }
+
+        // Prélever la commission après commit (même pattern que les amendes)
+        List<Long> commissionIds = virementCommissionService.creerVirementsEnAttente(tirage);
+        if (!commissionIds.isEmpty()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    virementCommissionService.effectuerVirementsAsyncParIds(commissionIds);
+                }
+            });
         }
 
         TirageResponse confirmed = toTirageResponse(tirage);
@@ -659,6 +764,199 @@ public class TontineServiceImpl implements TontineService {
 
         log.info("Tirage {} confirmé pour tontine {} par adminId={}", tirageId, tontineId, adminId);
         return confirmed;
+    }
+
+    // ── Renégociation après déclin (membres intéressés) ──────────────────────
+
+    @Override
+    public ApiResponse<String> exprimerInteret(Long tontineId, Long userId, boolean interesse) {
+        Tontine tontine = tontineRepository.findById(tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
+        MembreTontine membre = membreRepository.findByUtilisateurIdAndTontineId(userId, tontineId)
+                .orElseThrow(() -> new ForbiddenException("Vous n'êtes pas membre de cette tontine"));
+
+        int cycle = tontine.getCycleActuel();
+        if (interesse) {
+            boolean dejaInscrit = tirageInteretRepository
+                    .findByTontineIdAndNumeroCycleAndMembreId(tontineId, cycle, membre.getId())
+                    .isPresent();
+            if (!dejaInscrit) {
+                tirageInteretRepository.save(TirageInteret.builder()
+                        .tontine(tontine).numeroCycle(cycle).membre(membre).build());
+            }
+            return ApiResponse.success(null, "Intérêt enregistré pour ce cycle");
+        }
+
+        tirageInteretRepository.deleteByTontineIdAndNumeroCycleAndMembreId(tontineId, cycle, membre.getId());
+        return ApiResponse.success(null, "Intérêt retiré");
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<MembreResponse> getInteresses(Long tontineId, Long userId) {
+        Tontine tontine = tontineRepository.findById(tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
+        verifierAccesTontine(tontineId, userId);
+
+        return tirageInteretRepository.findByTontineIdAndNumeroCycle(tontineId, tontine.getCycleActuel())
+                .stream()
+                .map(i -> toMembreResponse(i.getMembre(), tontine))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @CacheEvict(value = "statistiques", key = "#tontineId")
+    public TirageResponse choisirRemplacant(Long tontineId, Long tirageId, Long nouveauMembreId, Long adminId) {
+        verifierEstAdmin(tontineId, adminId);
+
+        Tirage tirage = tirageRepository.findByIdAndTontineId(tirageId, tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tirage non trouvé"));
+
+        if (tirage.getStatutAcceptation() != TirageAcceptationStatut.DECLINE) {
+            throw new BadRequestException("Seul un tirage décliné peut recevoir un remplaçant");
+        }
+        if (Boolean.TRUE.equals(tirage.getEnLitige())) {
+            throw new BadRequestException("Ce tirage fait l'objet d'un signalement en cours d'examen");
+        }
+
+        MembreTontine nouveauMembre = membreRepository.findById(nouveauMembreId)
+                .orElseThrow(() -> new ResourceNotFoundException("Membre non trouvé"));
+        if (!nouveauMembre.getTontine().getId().equals(tontineId)) {
+            throw new BadRequestException("Ce membre n'appartient pas à cette tontine");
+        }
+        boolean eligible = membreRepository.findEligiblesPourTirage(tontineId)
+                .stream().anyMatch(m -> m.getId().equals(nouveauMembreId));
+        if (!eligible) {
+            throw new BadRequestException("Ce membre n'est pas éligible pour recevoir la cagnotte ce cycle");
+        }
+
+        Tontine tontine = tirage.getTontine();
+
+        // Même logique que le tirage initial : le remplaçant repart sur une
+        // fenêtre de 15 min pour accepter ou décliner à son tour.
+        tirage.setBeneficiaire(nouveauMembre);
+        tirage.setStatutAcceptation(TirageAcceptationStatut.EN_ATTENTE);
+        tirage.setDateExpirationReponse(LocalDateTime.now().plusMinutes(FENETRE_REPONSE_MINUTES));
+        tirage = tirageRepository.save(tirage);
+
+        nouveauMembre.setACagnotteSurCycleActuel(true);
+        membreRepository.save(nouveauMembre);
+
+        notifierTirage(tontine, nouveauMembre, tirage.getMontantDistribue());
+
+        TirageResponse response = toTirageResponse(tirage);
+        tirageWsHandler.broadcast(tontineId, new TirageWsEvent("TIRAGE_LANCE", response));
+
+        log.info("Tirage {} : remplaçant choisi (membreId={}) par adminId={}", tirageId, nouveauMembreId, adminId);
+        return response;
+    }
+
+    // ── Signalement/contestation (n'importe quel membre) ──────────────────────
+
+    @Override
+    public TirageLitigeResponse signalerLitige(Long tontineId, Long tirageId, Long userId, String motif) {
+        Tirage tirage = tirageRepository.findByIdAndTontineId(tirageId, tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tirage non trouvé"));
+        verifierAccesTontine(tontineId, userId);
+
+        if (Boolean.TRUE.equals(tirage.getEnLitige())) {
+            throw new BadRequestException("Un signalement est déjà en cours d'examen pour ce tirage");
+        }
+
+        Utilisateur signaleur = utilisateurRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
+
+        TirageLitige litige = tirageLitigeRepository.save(TirageLitige.builder()
+                .tirage(tirage).signalePar(signaleur).motif(motif).build());
+
+        tirage.setEnLitige(true);
+        tirageRepository.save(tirage);
+
+        Tontine tontine = tirage.getTontine();
+        // Notification privée à l'admin uniquement — pas de diffusion publique
+        // d'une accusation tant qu'elle n'a pas été examinée.
+        notificationService.creerNotification(tontine.getCreateur(), tontine,
+                "⚠️ Signalement sur le tirage — " + tontine.getNom(),
+                signaleur.getPrenom() + " " + signaleur.getNom() + " a signalé un problème : " + motif,
+                NotificationType.TIRAGE_SIGNALE);
+
+        log.info("Tirage {} signalé par userId={}", tirageId, userId);
+        return toTirageLitigeResponse(litige);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TirageLitigeResponse> getLitiges(Long tontineId, Long tirageId, Long userId) {
+        verifierEstAdmin(tontineId, userId);
+        Tirage tirage = tirageRepository.findByIdAndTontineId(tirageId, tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tirage non trouvé"));
+
+        return tirageLitigeRepository.findByTirageIdOrderByCreatedAtDesc(tirage.getId())
+                .stream().map(this::toTirageLitigeResponse).collect(Collectors.toList());
+    }
+
+    @Override
+    @CacheEvict(value = "statistiques", key = "#tontineId")
+    public TirageLitigeResponse resoudreLitige(Long tontineId, Long tirageId, Long litigeId,
+                                                boolean confirme, String commentaire, Long adminId) {
+        verifierEstAdmin(tontineId, adminId);
+
+        Tirage tirage = tirageRepository.findByIdAndTontineId(tirageId, tontineId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tirage non trouvé"));
+        TirageLitige litige = tirageLitigeRepository.findByIdAndTirageId(litigeId, tirage.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Signalement non trouvé"));
+
+        if (litige.getStatut() != LitigeStatut.EN_COURS) {
+            throw new BadRequestException("Ce signalement a déjà été traité");
+        }
+
+        Utilisateur admin = utilisateurRepository.findById(adminId).orElseThrow();
+        litige.setStatut(confirme ? LitigeStatut.CONFIRME : LitigeStatut.REJETE);
+        litige.setResoluPar(admin);
+        litige.setResoluLe(LocalDateTime.now());
+        litige.setResolutionCommentaire(commentaire);
+        litige = tirageLitigeRepository.save(litige);
+
+        tirage.setEnLitige(false);
+
+        Tontine tontine = tirage.getTontine();
+        if (confirme) {
+            // Le signalement était fondé : on invalide le tirage en le faisant
+            // retomber dans le même état qu'un déclin — réutilise le flux de
+            // remplacement (Phase 3) plutôt que de réinventer une annulation.
+            tirage.setStatutAcceptation(TirageAcceptationStatut.DECLINE);
+            MembreTontine beneficiaire = tirage.getBeneficiaire();
+            beneficiaire.setACagnotteSurCycleActuel(false);
+            membreRepository.save(beneficiaire);
+
+            notificationService.creerNotification(tontine.getCreateur(), tontine,
+                    "⚠️ Signalement confirmé — " + tontine.getNom(),
+                    "Le tirage du cycle " + tirage.getNumeroCycle() + " a été invalidé après vérification. "
+                            + "Choisissez un remplaçant.",
+                    NotificationType.TIRAGE_SIGNALE);
+        } else {
+            notificationService.creerNotification(litige.getSignalePar(), tontine,
+                    "Signalement examiné — " + tontine.getNom(),
+                    "Votre signalement sur le tirage du cycle " + tirage.getNumeroCycle()
+                            + " a été examiné et rejeté."
+                            + (commentaire != null && !commentaire.isBlank() ? " Note : " + commentaire : ""),
+                    NotificationType.TIRAGE_SIGNALE);
+        }
+        tirageRepository.save(tirage);
+
+        log.info("Litige {} résolu (confirme={}) par adminId={} pour tirage {}", litigeId, confirme, adminId, tirageId);
+        return toTirageLitigeResponse(litige);
+    }
+
+    private TirageLitigeResponse toTirageLitigeResponse(TirageLitige l) {
+        return TirageLitigeResponse.builder()
+                .id(l.getId()).tirageId(l.getTirage().getId())
+                .signaleParId(l.getSignalePar().getId())
+                .signaleParNom(l.getSignalePar().getPrenom() + " " + l.getSignalePar().getNom())
+                .motif(l.getMotif()).statut(l.getStatut())
+                .resoluParNom(l.getResoluPar() != null ? l.getResoluPar().getPrenom() + " " + l.getResoluPar().getNom() : null)
+                .resoluLe(l.getResoluLe()).resolutionCommentaire(l.getResolutionCommentaire())
+                .createdAt(l.getCreatedAt()).build();
     }
 
     @Override
@@ -957,7 +1255,11 @@ public class TontineServiceImpl implements TontineService {
                 .numeroCycle(t.getNumeroCycle()).montantDistribue(t.getMontantDistribue())
                 .commissionPrelevee(t.getCommissionPrelevee() != null ? t.getCommissionPrelevee() : BigDecimal.ZERO)
                 .methodeTirage(t.getMethodeTirage()).dateTirage(t.getDateTirage())
-                .confirme(t.getConfirme()).createdAt(t.getCreatedAt()).build();
+                .confirme(t.getConfirme())
+                .statutAcceptation(t.getStatutAcceptation())
+                .dateExpirationReponse(t.getDateExpirationReponse())
+                .enLitige(t.getEnLitige())
+                .createdAt(t.getCreatedAt()).build();
     }
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -1089,6 +1391,16 @@ public class TontineServiceImpl implements TontineService {
             return '"' + value.replace("\"", "\"\"") + '"';
         }
         return value;
+    }
+
+    private void verifierWalletMobileMoney(Long userId) {
+        boolean aWallet = compteWalletRepository
+                .existsByUtilisateurIdAndOperateurInAndTelephoneIsNotNull(
+                        userId,
+                        List.of(PaiementMode.MTN_MOBILE_MONEY, PaiementMode.ORANGE_MONEY));
+        if (!aWallet) {
+            throw new com.tontine.exception.WalletRequisException();
+        }
     }
 
     private String genererCodeInvitation() {

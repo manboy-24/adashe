@@ -7,6 +7,7 @@ import com.tontine.dto.request.NouveauPinRequest;
 import com.tontine.dto.request.ResetPinRequest;
 import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.AuthResponse;
+import com.tontine.dto.response.ConnexionPinResponse;
 import com.tontine.entity.Utilisateur;
 import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
@@ -122,7 +123,7 @@ class PinAuthServiceTest {
         req.setTelephone("699000001");
         req.setPin("1234");
 
-        ApiResponse<AuthResponse> result = service.connecterAvecPin(req);
+        ApiResponse<ConnexionPinResponse> result = service.connecterAvecPin(req);
 
         assertTrue(result.isSuccess());
         verify(repo).save(argThat(u -> u.getTentativesPinEchouees() == 0));

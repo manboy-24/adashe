@@ -40,11 +40,14 @@ public class SecurityConfig {
             "/auth/pin/reset/demande",
             "/auth/pin/reset/confirmer",
             "/auth/refresh-token",
+            "/auth/google",
             "/paiements/webhook/**",
             "/dons/webhook/**",
             "/actuator/health",
             "/actuator/info",
-            "/ws/**"          // JWT validé dans JwtHandshakeInterceptor, pas ici
+            "/ws/**",              // JWT validé dans JwtHandshakeInterceptor, pas ici
+            "/join/**",            // Page de redirection deep-link (liens WhatsApp/SMS)
+            "/.well-known/**"      // Android App Links — assetlinks.json
     };
 
     @Bean

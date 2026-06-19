@@ -8,4 +8,5 @@ public interface AuthService {
     ApiResponse<String> renvoyerOtp(String telephone);
     ApiResponse<AuthResponse> rafraichirToken(String refreshToken);
     ApiResponse<String> deconnecter(Long userId);
+    ApiResponse<GoogleAuthResponse> connexionGoogle(GoogleAuthRequest request);
 }

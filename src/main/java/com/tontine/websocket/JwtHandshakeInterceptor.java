@@ -11,8 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 @Component
@@ -26,24 +24,13 @@ public class JwtHandshakeInterceptor implements HandshakeInterceptor {
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                    WebSocketHandler wsHandler, Map<String, Object> attributes) {
-        String query = request.getURI().getQuery();
-        if (query == null) {
-            log.warn("WS handshake refusé — pas de query string");
+        String authHeader = request.getHeaders().getFirst("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("WS handshake refusé — header Authorization absent ou malformé");
             return false;
         }
 
-        String token = null;
-        for (String param : query.split("&")) {
-            if (param.startsWith("token=")) {
-                token = URLDecoder.decode(param.substring(6), StandardCharsets.UTF_8);
-                break;
-            }
-        }
-
-        if (token == null || token.isBlank()) {
-            log.warn("WS handshake refusé — token absent");
-            return false;
-        }
+        String token = authHeader.substring(7);
 
         try {
             String username = jwtService.extractUsername(token);

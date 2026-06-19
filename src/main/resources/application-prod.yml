@@ -44,6 +44,8 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: false
+        type:
+          preferred_enum_jdbc_type: 12   # VARCHAR(12) — évite le mismatch ENUM natif MySQL
         jdbc:
           batch_size: 20
           fetch_size: 50

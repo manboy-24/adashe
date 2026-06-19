@@ -52,15 +52,15 @@ spring:
         order_inserts: true
         order_updates: true
 
-  # ── Mail production (Resend SMTP) ─────────────────────────────────────────
+  # ── Mail production (Brevo SMTP) ──────────────────────────────────────────
   mail:
-    host: smtp.resend.com
-    port: 465
-    username: resend
-    password: ${RESEND_API_KEY}
+    host: smtp-relay.brevo.com
+    port: 587
+    username: ${BREVO_SMTP_LOGIN}
+    password: ${BREVO_SMTP_PASSWORD}
     properties:
       mail.smtp.auth: true
-      mail.smtp.ssl.enable: true
+      mail.smtp.starttls.enable: true
 
 # ── JWT — secret fort obligatoire ─────────────────────────────────────────────
 jwt:

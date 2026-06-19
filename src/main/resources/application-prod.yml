@@ -38,7 +38,7 @@ spring:
   # ── JPA ───────────────────────────────────────────────────────────────────
   jpa:
     hibernate:
-      ddl-auto: validate        # Jamais "update" ni "create" en production
+      ddl-auto: none            # Flyway gère le schéma — Hibernate ne valide pas
     show-sql: false
     properties:
       hibernate:

@@ -4,6 +4,7 @@ import com.tontine.entity.CompteWallet;
 import com.tontine.enums.PaiementMode;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,4 +18,7 @@ public interface CompteWalletRepository extends JpaRepository<CompteWallet, Long
     @org.springframework.data.jpa.repository.Query(
         "SELECT w FROM CompteWallet w WHERE w.utilisateur.id = :userId AND w.actif = true AND w.telephone IS NOT NULL")
     List<CompteWallet> findActifsByUtilisateurId(@org.springframework.data.repository.query.Param("userId") Long userId);
+
+    /** Vérifie qu'un utilisateur possède au moins un wallet Mobile Money (MTN ou Orange) avec un numéro renseigné. */
+    boolean existsByUtilisateurIdAndOperateurInAndTelephoneIsNotNull(Long utilisateurId, Collection<PaiementMode> operateurs);
 }

@@ -230,6 +230,8 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Vous êtes déjà membre de cette tontine");
         }
 
+        verifierWalletMobileMoney(userId);
+
         AjoutMembreRequest req = new AjoutMembreRequest();
         req.setUtilisateurId(userId);
         ajouterMembre(tontine.getId(), req, tontine.getCreateur().getId());
@@ -250,6 +252,8 @@ public class TontineServiceImpl implements TontineService {
         if (membre.getStatutMembre() == MembreStatut.RETIRE) {
             throw new BadRequestException("Votre invitation a été annulée");
         }
+
+        verifierWalletMobileMoney(userId);
 
         membre.setStatutMembre(MembreStatut.ACTIF);
         membre.setActif(true);
@@ -1387,6 +1391,16 @@ public class TontineServiceImpl implements TontineService {
             return '"' + value.replace("\"", "\"\"") + '"';
         }
         return value;
+    }
+
+    private void verifierWalletMobileMoney(Long userId) {
+        boolean aWallet = compteWalletRepository
+                .existsByUtilisateurIdAndOperateurInAndTelephoneIsNotNull(
+                        userId,
+                        List.of(PaiementMode.MTN_MOBILE_MONEY, PaiementMode.ORANGE_MONEY));
+        if (!aWallet) {
+            throw new com.tontine.exception.WalletRequisException();
+        }
     }
 
     private String genererCodeInvitation() {

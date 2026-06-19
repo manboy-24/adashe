@@ -27,6 +27,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> forbidden(ForbiddenException ex) {
         return ResponseEntity.status(403).body(ApiResponse.error(ex.getMessage()));
     }
+    @ExceptionHandler(WalletRequisException.class)
+    public ResponseEntity<ApiResponse<Void>> walletRequis(WalletRequisException ex) {
+        return ResponseEntity.status(403).body(ApiResponse.error(ex.getMessage(), "WALLET_REQUIS"));
+    }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> validation(MethodArgumentNotValidException ex) {
         String errors = ex.getBindingResult().getFieldErrors().stream()

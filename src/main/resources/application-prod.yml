@@ -13,7 +13,7 @@
 spring:
   # ── MySQL production ───────────────────────────────────────────────────────
   datasource:
-    url: jdbc:mysql://${DB_HOST}:3306/${DB_NAME}?useSSL=true&serverTimezone=UTC&characterEncoding=UTF-8&requireSSL=true
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME}?useSSL=true&serverTimezone=UTC&characterEncoding=UTF-8&requireSSL=true
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -31,7 +31,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: false  # DB prod doit partir de zéro à V1
+    baseline-on-migrate: true   # nécessaire sur DB Railway fraîche
     validate-on-migrate: true
     out-of-order: false
 
@@ -73,19 +73,12 @@ mobile-money:
   orange:
     base-url: https://api.orange.com/orange-money-webpay/cm/v1
 
-# ── Logs minimaux — pas de données sensibles dans les fichiers ─────────────────
+# ── Logs — stdout uniquement (Railway capture les logs console) ────────────────
 logging:
   level:
     com.tontine: ${LOG_LEVEL:WARN}
     org.springframework.security: WARN
     org.hibernate.SQL: WARN
-  file:
-    name: /var/log/adashcash/app.log
-  logback:
-    rollingpolicy:
-      max-file-size: 50MB
-      max-history: 30
-      total-size-cap: 1GB
 
 # ── Swagger désactivé en prod ─────────────────────────────────────────────────
 springdoc:

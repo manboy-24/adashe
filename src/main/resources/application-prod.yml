@@ -52,16 +52,15 @@ spring:
         order_inserts: true
         order_updates: true
 
-  # ── Mail production ────────────────────────────────────────────────────────
+  # ── Mail production (Resend SMTP) ─────────────────────────────────────────
   mail:
-    host: smtp.gmail.com
-    port: 587
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    host: smtp.resend.com
+    port: 465
+    username: resend
+    password: ${RESEND_API_KEY}
     properties:
       mail.smtp.auth: true
-      mail.smtp.starttls.enable: true
-      mail.smtp.ssl.trust: smtp.gmail.com
+      mail.smtp.ssl.enable: true
 
 # ── JWT — secret fort obligatoire ─────────────────────────────────────────────
 jwt:

@@ -55,12 +55,16 @@ spring:
   # ── Mail production (Brevo SMTP) ──────────────────────────────────────────
   mail:
     host: smtp-relay.brevo.com
-    port: 587
+    port: 465
     username: ${BREVO_SMTP_LOGIN}
     password: ${BREVO_SMTP_PASSWORD}
     properties:
       mail.smtp.auth: true
-      mail.smtp.starttls.enable: true
+      mail.smtp.ssl.enable: true
+
+app:
+  mail:
+    from: ${MAIL_FROM:noreply@adashe.com}
 
 # ── JWT — secret fort obligatoire ─────────────────────────────────────────────
 jwt:

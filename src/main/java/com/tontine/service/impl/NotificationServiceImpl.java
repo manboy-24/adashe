@@ -53,7 +53,7 @@ public class NotificationServiceImpl implements NotificationService {
     @Value("${twilio.api-secret:}")   private String twilioApiSecret;   // option B
     @Value("${twilio.from-number:}")  private String twilioFromNumber;
 
-    @Value("${spring.mail.username:noreply@adashe.com}") private String mailFrom;
+    @Value("${app.mail.from:noreply@adashe.com}") private String mailFrom;
     @Value("${mail.provider:smtp}") private String mailProvider;
 
     // ── Canal 1 : Notification en base + Push FCM ─────────────────────────────

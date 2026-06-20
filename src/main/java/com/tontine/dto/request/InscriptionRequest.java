@@ -17,4 +17,8 @@ public class InscriptionRequest {
     @NotBlank(message = "L'email est obligatoire")
     @Email(message = "Adresse email invalide")
     private String email;
+
+    @NotBlank(message = "Le PIN est obligatoire")
+    @Pattern(regexp = "\\d{4}", message = "Le PIN doit contenir exactement 4 chiffres")
+    private String pin;
 }

@@ -67,13 +67,16 @@ public class AuthServiceImpl implements AuthService {
                 .telephone(request.getTelephone()).email(request.getEmail())
                 .role(Role.USER)
                 .telephoneVerifie(true)
+                .codePin(passwordEncoder.encode(request.getPin()))
+                .pinDefini(true)
+                .tentativesPinEchouees(0)
                 .build();
         utilisateurRepository.save(u);
 
         log.info("Inscription: {}", request.getTelephone());
         auditService.log(u.getId(), request.getTelephone(), "INSCRIPTION", true, null);
         AuthResponse authResponse = genererAuthResponse(u);
-        return ApiResponse.success(authResponse, "Compte créé ! Définissez votre PIN à 4 chiffres.");
+        return ApiResponse.success(authResponse, "Compte créé avec succès !");
     }
 
     // ── Vérifier OTP d'inscription ──────────────────────────────────────────

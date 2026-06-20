@@ -1,9 +1,8 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "MAVEN_OPTS='-Xmx384m -XX:MaxMetaspaceSize=128m' mvn clean package -DskipTests -q --no-transfer-progress"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "java -Xms128m -Xmx400m -XX:+UseContainerSupport -Dspring.profiles.active=prod -jar target/tontine-backend-1.0.0.jar"
 healthcheckPath = "/api/actuator/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

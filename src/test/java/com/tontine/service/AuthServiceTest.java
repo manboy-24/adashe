@@ -56,24 +56,27 @@ class AuthServiceTest {
     // ── inscrire ──────────────────────────────────────────────────────────────
 
     @Test
-    void inscrire_succes_envoie_sms() {
+    void inscrire_succes_cree_compte_direct() {
         when(utilisateurRepository.existsByTelephone("699000001")).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("hashedOtp");
+        when(utilisateurRepository.existsByEmail("paul@test.com")).thenReturn(false);
         when(utilisateurRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(jwtService.generateToken(any())).thenReturn("access");
+        when(jwtService.generateRefreshToken(any())).thenReturn("refresh");
+        when(jwtService.getExpirationTime()).thenReturn(3600L);
 
         InscriptionRequest req = new InscriptionRequest();
         req.setNom("Kamga");
         req.setPrenom("Paul");
         req.setTelephone("699000001");
+        req.setEmail("paul@test.com");
 
-        ApiResponse<String> result = service.inscrire(req);
+        ApiResponse<AuthResponse> result = service.inscrire(req);
 
         assertTrue(result.isSuccess());
-        verify(smsAsyncService).envoyerSmsAsync(eq("699000001"), anyString());
+        assertNotNull(result.getData());
         verify(utilisateurRepository).save(argThat(u ->
             u.getTelephone().equals("699000001") &&
-            u.getOtpCode().equals("hashedOtp") &&
-            "INSCRIPTION".equals(u.getOtpPurpose())
+            Boolean.TRUE.equals(u.getTelephoneVerifie())
         ));
     }
 

@@ -241,28 +241,27 @@ class PinAuthServiceTest {
     // ── demanderResetPin ──────────────────────────────────────────────────────
 
     @Test
-    void demanderResetPin_envoie_sms() {
-        when(repo.findByTelephone("699000001")).thenReturn(Optional.of(utilisateur));
+    void demanderResetPin_envoie_email() {
+        utilisateur.setEmail("paul@test.com");
+        when(repo.findByEmail("paul@test.com")).thenReturn(Optional.of(utilisateur));
         when(encoder.encode(anyString())).thenReturn("hashedOtp");
 
         ResetPinRequest req = new ResetPinRequest();
-        req.setTelephone("699000001");
-        req.setCanal("SMS");
+        req.setEmail("paul@test.com");
 
         ApiResponse<String> result = service.demanderResetPin(req);
 
         assertTrue(result.isSuccess());
-        verify(smsAsyncService).envoyerSmsAsync(eq("699000001"), anyString());
+        verify(notifService).envoyerEmail(eq("paul@test.com"), anyString(), anyString());
         verify(repo).save(argThat(u -> "RESET_PIN".equals(u.getOtpPurpose())));
     }
 
     @Test
-    void demanderResetPin_telephone_inexistant_leve_exception() {
-        when(repo.findByTelephone(anyString())).thenReturn(Optional.empty());
+    void demanderResetPin_email_inexistant_leve_exception() {
+        when(repo.findByEmail(anyString())).thenReturn(Optional.empty());
 
         ResetPinRequest req = new ResetPinRequest();
-        req.setTelephone("699000000");
-        req.setCanal("SMS");
+        req.setEmail("inconnu@test.com");
 
         assertThrows(ResourceNotFoundException.class, () -> service.demanderResetPin(req));
     }
@@ -275,13 +274,14 @@ class PinAuthServiceTest {
         utilisateur.setOtpExpiration(LocalDateTime.now().plusMinutes(5));
         utilisateur.setOtpPurpose("RESET_PIN");
 
-        when(repo.findByTelephone("699000001")).thenReturn(Optional.of(utilisateur));
+        utilisateur.setEmail("paul@test.com");
+        when(repo.findByEmail("paul@test.com")).thenReturn(Optional.of(utilisateur));
         when(encoder.matches("654321", "hashedOtp")).thenReturn(true);
         when(encoder.encode("5678")).thenReturn("hashedNouveau");
         when(authHelper.genererAuthResponse(any())).thenReturn(new AuthResponse());
 
         NouveauPinRequest req = new NouveauPinRequest();
-        req.setTelephone("699000001");
+        req.setEmail("paul@test.com");
         req.setCodeOtp("654321");
         req.setNouveauPin("5678");
         req.setConfirmPin("5678");
@@ -302,11 +302,12 @@ class PinAuthServiceTest {
         utilisateur.setOtpExpiration(LocalDateTime.now().minusMinutes(1)); // expiré
         utilisateur.setOtpPurpose("RESET_PIN");
 
-        when(repo.findByTelephone("699000001")).thenReturn(Optional.of(utilisateur));
+        utilisateur.setEmail("paul@test.com");
+        when(repo.findByEmail("paul@test.com")).thenReturn(Optional.of(utilisateur));
         when(encoder.matches("654321", "hashedOtp")).thenReturn(true);
 
         NouveauPinRequest req = new NouveauPinRequest();
-        req.setTelephone("699000001");
+        req.setEmail("paul@test.com");
         req.setCodeOtp("654321");
         req.setNouveauPin("5678");
         req.setConfirmPin("5678");

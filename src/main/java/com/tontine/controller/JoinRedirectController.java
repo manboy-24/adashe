@@ -4,10 +4,14 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 /**
  * Endpoint public : redirige vers le deep link adashecash://join/{code}.
  * URL partagée sur WhatsApp/SMS — doit être HTTPS pour être cliquable.
- * Exemple : https://api.adashcash.com/api/join/ABC123
+ * Utilise un Intent URI Android (intent://) au lieu de adashecash:// pour
+ * contourner le blocage des redirections JS sans geste utilisateur (Chrome 83+).
  */
 @RestController
 public class JoinRedirectController {
@@ -19,7 +23,12 @@ public class JoinRedirectController {
 
     @GetMapping(value = "/join/{code}", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> redirectToApp(@PathVariable String code) {
-        String deepLink = "adashecash://join/" + code;
+        // Intent URI Android : intercepté par Chrome sans geste utilisateur requis.
+        // S.browser_fallback_url redirige vers le Play Store si l'app n'est pas installée.
+        String playStoreEncoded = URLEncoder.encode(PLAY_STORE_URL, StandardCharsets.UTF_8);
+        String intentUri = "intent://join/" + code
+                + "#Intent;scheme=adashecash;package=com.tontineplus.app"
+                + ";S.browser_fallback_url=" + playStoreEncoded + ";end";
         String html = """
                 <!DOCTYPE html>
                 <html lang="fr">
@@ -167,9 +176,8 @@ public class JoinRedirectController {
                       <div class="code-value">%s</div>
                     </div>
 
-                    <!-- Bouton principal -->
-                    <a class="btn btn-primary" href="%s" id="openBtn"
-                       onclick="scheduleStoreFallback()">
+                    <!-- Bouton principal : Intent URI Android → ouvre l'app ou Play Store -->
+                    <a class="btn btn-primary" href="%s" id="openBtn">
                       Ouvrir dans l'application
                     </a>
 
@@ -196,30 +204,27 @@ public class JoinRedirectController {
 
                   <script>
                     (function () {
-                      var opened = false;
+                      var isAndroid = /Android/i.test(navigator.userAgent);
+                      var storeSection = document.getElementById('store-section');
 
-                      function tryDeepLink() {
-                        if (opened) return;
-                        opened = true;
-                        window.location.href = '%s';
-                        scheduleStoreFallback();
-                      }
-
-                      // Tentative automatique 400 ms après le chargement
-                      setTimeout(tryDeepLink, 400);
-
-                      window.scheduleStoreFallback = function () {
+                      if (isAndroid) {
+                        // Intent URI : Chrome Android l'intercepte sans geste utilisateur.
+                        // Si l'app est installée → ouvre l'app.
+                        // Sinon → S.browser_fallback_url redirige vers le Play Store.
+                        window.location.replace('%s');
+                        // Afficher quand même le Play Store comme secours après 2,5 s
                         setTimeout(function () {
-                          if (!document.hidden) {
-                            document.getElementById('store-section').classList.add('visible');
-                          }
-                        }, 2200);
-                      };
+                          if (!document.hidden) storeSection.classList.add('visible');
+                        }, 2500);
+                      } else {
+                        // Desktop / iOS : montrer directement le lien Play Store
+                        storeSection.classList.add('visible');
+                      }
                     })();
                   </script>
                 </body>
                 </html>
-                """.formatted(LOGO_B64, code, deepLink, PLAY_STORE_URL, deepLink);
+                """.formatted(LOGO_B64, code, intentUri, PLAY_STORE_URL, intentUri);
 
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_HTML)

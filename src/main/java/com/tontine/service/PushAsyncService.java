@@ -23,14 +23,23 @@ public class PushAsyncService {
     public void envoyerPushAsync(String fcmToken, String titre, String corps,
                                  String type, Long tontineId) {
         try {
+            String resolvedType = type != null ? type : "GENERAL";
             Message message = Message.builder()
                     .putData("titre",     titre)
                     .putData("message",   corps)
-                    .putData("type",      type != null ? type : "GENERAL")
+                    .putData("type",      resolvedType)
                     .putData("tontineId", tontineId != null ? tontineId.toString() : "")
+                    // Notification visible même quand l'app est tuée (gérée par le SDK FCM)
+                    .setNotification(Notification.builder()
+                            .setTitle(titre)
+                            .setBody(corps)
+                            .build())
                     .setToken(fcmToken)
                     .setAndroidConfig(AndroidConfig.builder()
                             .setPriority(AndroidConfig.Priority.HIGH)
+                            .setNotification(AndroidNotification.builder()
+                                    .setChannelId(channelFor(resolvedType))
+                                    .build())
                             .build())
                     .setApnsConfig(ApnsConfig.builder()
                             .setAps(Aps.builder()
@@ -57,6 +66,15 @@ public class PushAsyncService {
         } catch (Exception e) {
             log.error("[FCM] Firebase non configuré ou erreur réseau : {}", e.getMessage());
         }
+    }
+
+    private static String channelFor(String type) {
+        return switch (type) {
+            case "PAIEMENT_RECU", "RAPPEL_COTISATION", "NOUVEAU_CYCLE", "DON_CONFIRME" -> "tontine_paiement";
+            case "TIRAGE_EFFECTUE", "TIRAGE_BENEFICIAIRE"                               -> "tontine_tirage";
+            case "RETARD_PAIEMENT", "MEMBRE_BLOQUE"                                    -> "tontine_retard";
+            default                                                                     -> "tontine_general";
+        };
     }
 
     @Transactional

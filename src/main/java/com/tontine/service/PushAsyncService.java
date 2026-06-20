@@ -70,10 +70,10 @@ public class PushAsyncService {
 
     private static String channelFor(String type) {
         return switch (type) {
-            case "PAIEMENT_RECU", "RAPPEL_COTISATION", "NOUVEAU_CYCLE", "DON_CONFIRME" -> "tontine_paiement";
-            case "TIRAGE_EFFECTUE", "TIRAGE_BENEFICIAIRE"                               -> "tontine_tirage";
-            case "RETARD_PAIEMENT", "MEMBRE_BLOQUE"                                    -> "tontine_retard";
-            default                                                                     -> "tontine_general";
+            case "PAIEMENT_RECU", "RAPPEL_COTISATION", "NOUVEAU_CYCLE", "DON_CONFIRME" -> "adashe_paiement_v2";
+            case "TIRAGE_EFFECTUE", "TIRAGE_BENEFICIAIRE"                               -> "adashe_tirage_v2";
+            case "RETARD_PAIEMENT", "MEMBRE_BLOQUE"                                    -> "adashe_retard_v2";
+            default                                                                     -> "adashe_general_v2";
         };
     }
 

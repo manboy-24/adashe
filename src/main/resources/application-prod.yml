@@ -52,15 +52,16 @@ spring:
         order_inserts: true
         order_updates: true
 
-  # ── Mail production (Brevo SMTP) ──────────────────────────────────────────
+  # ── Mail production (Brevo SMTP — port 587 STARTTLS, 465 bloqué sur Railway) ─
   mail:
     host: smtp-relay.brevo.com
-    port: 465
+    port: 587
     username: ${BREVO_SMTP_LOGIN}
     password: ${BREVO_SMTP_PASSWORD}
     properties:
       mail.smtp.auth: true
-      mail.smtp.ssl.enable: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
 
 app:
   mail:

@@ -25,8 +25,8 @@ public class AuthController {
     private final SecurityUtil securityUtil;
 
     @PostMapping("/inscrire")
-    @Operation(summary = "S'inscrire — envoie un OTP par SMS")
-    public ResponseEntity<ApiResponse<String>> inscrire(
+    @Operation(summary = "S'inscrire — création de compte directe, PIN à définir ensuite")
+    public ResponseEntity<ApiResponse<AuthResponse>> inscrire(
             @Valid @RequestBody InscriptionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.inscrire(request));
     }

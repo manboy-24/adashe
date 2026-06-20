@@ -14,5 +14,7 @@ public class InscriptionRequest {
     @Pattern(regexp = "^\\+?[1-9]\\d{7,14}$", message = "Numero de telephone invalide")
     private String telephone;
 
+    @NotBlank(message = "L'email est obligatoire")
+    @Email(message = "Adresse email invalide")
     private String email;
 }

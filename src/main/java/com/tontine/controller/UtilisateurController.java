@@ -5,7 +5,6 @@ import com.tontine.dto.request.UpdateProfilRequest;
 import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.UtilisateurResponse;
 import com.tontine.entity.Utilisateur;
-import com.tontine.exception.BadRequestException;
 import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.service.AuditService;
@@ -22,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
 
 @RestController
 @RequestMapping("/utilisateurs")
@@ -60,25 +60,15 @@ public class UtilisateurController {
     }
 
     @PutMapping("/profil")
-    @Operation(summary = "Modifier son nom, prénom ou email")
+    @Operation(summary = "Modifier son nom ou prénom")
     public ResponseEntity<ApiResponse<UtilisateurResponse>> updateProfil(
             @Valid @RequestBody UpdateProfilRequest request) {
         Long userId = securityUtil.getCurrentUserId();
         Utilisateur u = utilisateurRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
-        // Vérifier unicité de l'email si modifié
-        String nouvelEmail = (request.getEmail() != null && !request.getEmail().isBlank())
-                ? request.getEmail().trim() : null;
-        if (nouvelEmail != null && !nouvelEmail.equals(u.getEmail())) {
-            utilisateurRepository.findByEmail(nouvelEmail).ifPresent(existing -> {
-                throw new BadRequestException("Cet email est déjà utilisé par un autre compte");
-            });
-        }
-
         u.setNom(request.getNom().trim());
         u.setPrenom(request.getPrenom().trim());
-        if (nouvelEmail != null) u.setEmail(nouvelEmail);
         utilisateurRepository.save(u);
 
         UtilisateurResponse response = UtilisateurResponse.builder()
@@ -162,25 +152,6 @@ public class UtilisateurController {
             utilisateurRepository.save(u);
         });
         return ResponseEntity.ok(ApiResponse.success(null, "Notifications push désactivées"));
-    }
-
-    @PatchMapping("/email")
-    @Operation(summary = "Ajouter ou modifier l'adresse email de l'utilisateur connecté")
-    public ResponseEntity<ApiResponse<String>> updateEmail(@RequestBody Map<String, String> body) {
-        String email = body.getOrDefault("email", "").trim();
-        if (email.isBlank() || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
-            throw new BadRequestException("Format email invalide");
-        }
-        Long userId = securityUtil.getCurrentUserId();
-        utilisateurRepository.findByEmail(email).ifPresent(existing -> {
-            if (!existing.getId().equals(userId))
-                throw new BadRequestException("Cet email est déjà utilisé par un autre compte");
-        });
-        Utilisateur u = utilisateurRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
-        u.setEmail(email);
-        utilisateurRepository.save(u);
-        return ResponseEntity.ok(ApiResponse.success(email, "Email enregistré"));
     }
 
     @PutMapping("/avatar")

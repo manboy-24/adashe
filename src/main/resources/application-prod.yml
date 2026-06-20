@@ -13,7 +13,7 @@
 spring:
   # ── MySQL production ───────────────────────────────────────────────────────
   datasource:
-    url: jdbc:mysql://${DB_HOST}:3306/${DB_NAME}?useSSL=true&serverTimezone=UTC&characterEncoding=UTF-8&requireSSL=true
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME}?useSSL=true&serverTimezone=UTC&characterEncoding=UTF-8&requireSSL=true
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -31,35 +31,40 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: false  # DB prod doit partir de zéro à V1
+    baseline-on-migrate: true   # nécessaire sur DB Railway fraîche
     validate-on-migrate: true
     out-of-order: false
 
   # ── JPA ───────────────────────────────────────────────────────────────────
   jpa:
     hibernate:
-      ddl-auto: validate        # Jamais "update" ni "create" en production
+      ddl-auto: none            # Flyway gère le schéma — Hibernate ne valide pas
     show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: false
+        type:
+          preferred_enum_jdbc_type: 12   # VARCHAR(12) — évite le mismatch ENUM natif MySQL
         jdbc:
           batch_size: 20
           fetch_size: 50
         order_inserts: true
         order_updates: true
 
-  # ── Mail production ────────────────────────────────────────────────────────
+  # ── Mail production (Brevo SMTP) ──────────────────────────────────────────
   mail:
-    host: smtp.gmail.com
-    port: 587
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    host: smtp-relay.brevo.com
+    port: 465
+    username: ${BREVO_SMTP_LOGIN}
+    password: ${BREVO_SMTP_PASSWORD}
     properties:
       mail.smtp.auth: true
-      mail.smtp.starttls.enable: true
-      mail.smtp.ssl.trust: smtp.gmail.com
+      mail.smtp.ssl.enable: true
+
+app:
+  mail:
+    from: ${MAIL_FROM:noreply@adashe.com}
 
 # ── JWT — secret fort obligatoire ─────────────────────────────────────────────
 jwt:
@@ -73,19 +78,12 @@ mobile-money:
   orange:
     base-url: https://api.orange.com/orange-money-webpay/cm/v1
 
-# ── Logs minimaux — pas de données sensibles dans les fichiers ─────────────────
+# ── Logs — stdout uniquement (Railway capture les logs console) ────────────────
 logging:
   level:
     com.tontine: ${LOG_LEVEL:WARN}
     org.springframework.security: WARN
     org.hibernate.SQL: WARN
-  file:
-    name: /var/log/adashcash/app.log
-  logback:
-    rollingpolicy:
-      max-file-size: 50MB
-      max-history: 30
-      total-size-cap: 1GB
 
 # ── Swagger désactivé en prod ─────────────────────────────────────────────────
 springdoc:

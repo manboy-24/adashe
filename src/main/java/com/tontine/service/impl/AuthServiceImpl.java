@@ -53,42 +53,27 @@ public class AuthServiceImpl implements AuthService {
     @Value("${otp.expiration-minutes:5}") private int otpExpiration;
     @Value("${google.client-id}")         private String googleClientId;
 
-    // ── Inscription : téléphone + nom/prénom, pas de mot de passe ─────────────
+    // ── Inscription : téléphone + nom/prénom, compte actif immédiatement ────────
     @Override
-    public ApiResponse<String> inscrire(InscriptionRequest request) {
+    public ApiResponse<AuthResponse> inscrire(InscriptionRequest request) {
         if (utilisateurRepository.existsByTelephone(request.getTelephone()))
             throw new BadRequestException("Ce numéro est déjà utilisé");
         if (request.getEmail() != null && !request.getEmail().isBlank()
                 && utilisateurRepository.existsByEmail(request.getEmail()))
             throw new BadRequestException("Cet email est déjà utilisé");
 
-        String otp = OtpUtil.generer(6);
         Utilisateur u = Utilisateur.builder()
                 .nom(request.getNom()).prenom(request.getPrenom())
                 .telephone(request.getTelephone()).email(request.getEmail())
                 .role(Role.USER)
-                .otpCode(passwordEncoder.encode(otp))
-                .otpExpiration(LocalDateTime.now().plusMinutes(otpExpiration))
-                .otpPurpose("INSCRIPTION")
+                .telephoneVerifie(true)
                 .build();
         utilisateurRepository.save(u);
 
-        boolean viaEmail = request.getEmail() != null && !request.getEmail().isBlank();
-        if (viaEmail) {
-            emailAsyncService.envoyerEmailAsync(
-                request.getEmail(),
-                "Adashe — Code de vérification",
-                corpsEmailOtp(otp, otpExpiration)
-            );
-        } else {
-            smsAsyncService.envoyerSmsAsync(request.getTelephone(),
-                "Adashe - Code de verification : " + otp + ". Valable " + otpExpiration + " min.");
-        }
-
-        log.info("Inscription: {} - OTP envoyé par {}", request.getTelephone(), viaEmail ? "email" : "SMS");
-        auditService.log(null, request.getTelephone(), "INSCRIPTION", true, null);
-        String destination = viaEmail ? masquerEmail(request.getEmail()) : masquerTelephone(request.getTelephone());
-        return ApiResponse.success(null, "Code de vérification envoyé à " + destination);
+        log.info("Inscription: {}", request.getTelephone());
+        auditService.log(u.getId(), request.getTelephone(), "INSCRIPTION", true, null);
+        AuthResponse authResponse = genererAuthResponse(u);
+        return ApiResponse.success(authResponse, "Compte créé ! Définissez votre PIN à 4 chiffres.");
     }
 
     // ── Vérifier OTP d'inscription ──────────────────────────────────────────

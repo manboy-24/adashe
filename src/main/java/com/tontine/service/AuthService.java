@@ -3,7 +3,7 @@ import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
 
 public interface AuthService {
-    ApiResponse<String> inscrire(InscriptionRequest request);
+    ApiResponse<AuthResponse> inscrire(InscriptionRequest request);
     ApiResponse<AuthResponse> verifierOtp(OtpRequest request);
     ApiResponse<String> renvoyerOtp(String telephone);
     ApiResponse<AuthResponse> rafraichirToken(String refreshToken);

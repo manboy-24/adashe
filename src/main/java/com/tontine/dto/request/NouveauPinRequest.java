@@ -4,7 +4,9 @@ import lombok.Data;
 
 @Data
 public class NouveauPinRequest {
-    @NotBlank private String telephone;
+    @NotBlank(message = "L'email est obligatoire")
+    @Email(message = "Adresse email invalide")
+    private String email;
 
     @NotBlank(message = "Le code OTP est obligatoire")
     private String codeOtp;

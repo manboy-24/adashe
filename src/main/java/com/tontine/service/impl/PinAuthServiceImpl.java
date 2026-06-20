@@ -228,11 +228,14 @@ public class PinAuthServiceImpl implements PinAuthService {
         return ApiResponse.success(toConnexionPinResponse(auth), "Appareil confirmé ! Connexion réussie.");
     }
 
-    // ── 3. Demander reset PIN (envoie OTP par SMS ou email) ───────────────────
+    // ── 3. Demander reset PIN (OTP envoyé uniquement par email) ──────────────
     @Override
     public ApiResponse<String> demanderResetPin(ResetPinRequest request) {
-        Utilisateur u = repo.findByTelephone(request.getTelephone())
-                .orElseThrow(() -> new ResourceNotFoundException("Aucun compte trouvé avec ce numéro"));
+        Utilisateur u = repo.findByEmail(request.getEmail())
+                .orElseThrow(() -> new ResourceNotFoundException("Aucun compte trouvé avec cet email"));
+
+        if (u.getEmail() == null || u.getEmail().isBlank())
+            throw new BadRequestException("Aucun email associé à ce compte");
 
         // Rate limit : un seul code actif à la fois
         if (u.getOtpExpiration() != null && LocalDateTime.now().isBefore(u.getOtpExpiration().minusSeconds(30))) {
@@ -246,22 +249,15 @@ public class PinAuthServiceImpl implements PinAuthService {
         u.setOtpPurpose("RESET_PIN");
         repo.save(u);
 
-        String canal = request.getCanal() != null ? request.getCanal().toUpperCase() : "SMS";
+        notifService.envoyerEmail(u.getEmail(),
+                "Réinitialisation de votre code PIN Adashe",
+                "Bonjour " + u.getPrenom() + ",\n\n"
+                + "Votre code de réinitialisation : " + otp + "\n"
+                + "Valable " + otpExpiration + " minutes.\n\n"
+                + "Si vous n'avez pas fait cette demande, ignorez cet email.\n\n"
+                + "L'équipe Adashe");
 
-        if ("EMAIL".equals(canal)) {
-            if (u.getEmail() == null || u.getEmail().isBlank())
-                throw new BadRequestException("Aucun email associé à ce compte");
-            notifService.envoyerEmail(u.getEmail(),
-                    "Réinitialisation de votre PIN Tontine+",
-                    "Votre code de réinitialisation : " + otp + "\nValable " + otpExpiration + " minutes.");
-            return ApiResponse.success(null,
-                    "Code envoyé à " + masquerEmail(u.getEmail()));
-        } else {
-            smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "Adashe - Code reset PIN : " + otp + ". Valable " + otpExpiration + " min.");
-            return ApiResponse.success(null,
-                    "Code envoyé au " + masquerTelephone(u.getTelephone()));
-        }
+        return ApiResponse.success(null, "Code envoyé à " + masquerEmail(u.getEmail()));
     }
 
     // ── 4. Confirmer reset PIN avec OTP + nouveau PIN ─────────────────────────
@@ -272,7 +268,7 @@ public class PinAuthServiceImpl implements PinAuthService {
         if (!request.getNouveauPin().matches("\\d{4}"))
             throw new BadRequestException("Le PIN doit contenir exactement 4 chiffres");
 
-        Utilisateur u = repo.findByTelephone(request.getTelephone())
+        Utilisateur u = repo.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
         if (u.getOtpCode() == null || !encoder.matches(request.getCodeOtp(), u.getOtpCode()))

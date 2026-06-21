@@ -39,6 +39,8 @@ public class SecurityConfig {
             "/auth/pin/connexion",
             "/auth/pin/reset/demande",
             "/auth/pin/reset/confirmer",
+            "/auth/pin/reset/firebase",
+            "/auth/firebase/inscrire",
             "/auth/refresh-token",
             "/auth/google",
             "/paiements/webhook/**",

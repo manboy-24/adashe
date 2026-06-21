@@ -7,6 +7,7 @@ import java.util.List;
 
 public interface PinAuthService {
     ApiResponse<AuthResponse> creerPin(CreationPinRequest request, Long userId);
+    ApiResponse<AuthResponse> reinitialiserPinFirebase(FirebasePinResetRequest request);
     ApiResponse<ConnexionPinResponse> connecterAvecPin(ConnexionPinRequest request);
     ApiResponse<ConnexionPinResponse> confirmerNouvelAppareil(ConfirmerNouvelAppareilRequest request);
     ApiResponse<String> demanderResetPin(ResetPinRequest request);

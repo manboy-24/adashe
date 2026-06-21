@@ -1,5 +1,8 @@
 package com.tontine.service.impl;
 
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.FirebaseToken;
 import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
 import com.tontine.entity.Session;
@@ -301,6 +304,62 @@ public class PinAuthServiceImpl implements PinAuthService {
         }
         return ApiResponse.success(authHelper.genererAuthResponse(u),
                 "PIN réinitialisé avec succès ! Vous êtes maintenant connecté.");
+    }
+
+    // ── 4b. Reset PIN via Firebase Phone Auth (ou Email Link) ────────────────
+    @Override
+    public ApiResponse<AuthResponse> reinitialiserPinFirebase(FirebasePinResetRequest request) {
+        if (!request.getNouveauPin().matches("\\d{4}"))
+            throw new BadRequestException("Le PIN doit contenir exactement 4 chiffres");
+
+        FirebaseToken decoded;
+        try {
+            decoded = FirebaseAuth.getInstance().verifyIdToken(request.getIdToken());
+        } catch (FirebaseAuthException e) {
+            log.warn("Token Firebase invalide pour reset PIN: {}", e.getMessage());
+            throw new BadRequestException("Token Firebase invalide ou expiré");
+        }
+
+        Utilisateur u;
+        String phoneRaw = (String) decoded.getClaims().get("phone_number");
+        String email    = decoded.getEmail();
+
+        if (phoneRaw != null && !phoneRaw.isBlank()) {
+            String telephone = normaliserTelephoneE164(phoneRaw);
+            u = repo.findByTelephone(telephone)
+                    .orElseThrow(() -> new ResourceNotFoundException("Aucun compte trouvé avec ce numéro"));
+        } else if (email != null && !email.isBlank()) {
+            u = repo.findByEmail(email)
+                    .orElseThrow(() -> new ResourceNotFoundException("Aucun compte trouvé avec cet email"));
+        } else {
+            throw new BadRequestException("Token Firebase invalide : ni téléphone ni email");
+        }
+
+        u.setCodePin(encoder.encode(request.getNouveauPin()));
+        u.setPinDefini(true);
+        u.setTentativesPinEchouees(0);
+        u.setPinBloqueJusquA(null);
+        u.setRefreshToken(null);
+        u.setRefreshTokenExpiration(null);
+        repo.save(u);
+
+        log.info("PIN réinitialisé via Firebase pour: {}", u.getTelephone());
+        auditService.log(u.getId(), u.getTelephone(), "RESET_PIN_FIREBASE", true, null);
+
+        if (u.getEmail() != null && !u.getEmail().isBlank()) {
+            emailAsyncService.envoyerEmailAsync(u.getEmail(),
+                    "Sécurité Adashe — votre PIN a été réinitialisé",
+                    "Bonjour " + u.getPrenom() + ",\n\nVotre PIN Adashe a été réinitialisé.\n"
+                    + "Si vous n'êtes pas à l'origine de cette action, contactez-nous immédiatement.\n\n"
+                    + "— L'équipe Adashe");
+        }
+        return ApiResponse.success(authHelper.genererAuthResponse(u), "PIN réinitialisé avec succès !");
+    }
+
+    private String normaliserTelephoneE164(String e164) {
+        if (e164.startsWith("+237")) return e164.substring(4);
+        if (e164.startsWith("+"))   return e164.substring(1);
+        return e164;
     }
 
     private String masquerTelephone(String tel) {

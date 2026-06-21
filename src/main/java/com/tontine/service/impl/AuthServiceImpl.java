@@ -26,6 +26,9 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.FirebaseToken;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import java.nio.charset.StandardCharsets;
@@ -77,6 +80,33 @@ public class AuthServiceImpl implements AuthService {
         auditService.log(u.getId(), request.getTelephone(), "INSCRIPTION", true, null);
         AuthResponse authResponse = genererAuthResponse(u);
         return ApiResponse.success(authResponse, "Compte créé avec succès !");
+    }
+
+    // ── Inscription via Firebase Phone Auth ────────────────────────────────
+    @Override
+    public ApiResponse<AuthResponse> inscrireAvecFirebase(FirebaseInscriptionRequest request) {
+        String telephone = verifierTokenFirebaseTelephone(request.getIdToken());
+
+        if (utilisateurRepository.existsByTelephone(telephone))
+            throw new BadRequestException("Ce numéro est déjà utilisé");
+        if (request.getEmail() != null && !request.getEmail().isBlank()
+                && utilisateurRepository.existsByEmail(request.getEmail()))
+            throw new BadRequestException("Cet email est déjà utilisé");
+
+        Utilisateur u = Utilisateur.builder()
+                .nom(request.getNom()).prenom(request.getPrenom())
+                .telephone(telephone).email(request.getEmail())
+                .role(Role.USER)
+                .telephoneVerifie(true)
+                .codePin(passwordEncoder.encode(request.getPin()))
+                .pinDefini(true)
+                .tentativesPinEchouees(0)
+                .build();
+        utilisateurRepository.save(u);
+
+        log.info("Inscription Firebase: {}", telephone);
+        auditService.log(u.getId(), telephone, "INSCRIPTION_FIREBASE", true, null);
+        return ApiResponse.success(genererAuthResponse(u), "Compte créé avec succès !");
     }
 
     // ── Vérifier OTP d'inscription ──────────────────────────────────────────
@@ -376,6 +406,29 @@ public class AuthServiceImpl implements AuthService {
             ? local.charAt(0) + "***"
             : local.substring(0, 2) + "*".repeat(Math.min(local.length() - 2, 4));
         return masque + "@" + domain;
+    }
+
+    // ── Helpers Firebase ─────────────────────────────────────────────────────
+
+    /** Vérifie un ID token Firebase et retourne le numéro de téléphone local (sans +237). */
+    public String verifierTokenFirebaseTelephone(String idToken) {
+        try {
+            FirebaseToken decoded = FirebaseAuth.getInstance().verifyIdToken(idToken);
+            String phone = (String) decoded.getClaims().get("phone_number");
+            if (phone == null || phone.isBlank())
+                throw new BadRequestException("Le token Firebase ne contient pas de numéro vérifié");
+            return normaliserTelephoneE164(phone);
+        } catch (FirebaseAuthException e) {
+            log.warn("Token Firebase invalide: {}", e.getMessage());
+            throw new BadRequestException("Token Firebase invalide ou expiré");
+        }
+    }
+
+    /** Convertit +237XXXXXXXXX → XXXXXXXXX (format stocké en base). */
+    private String normaliserTelephoneE164(String e164) {
+        if (e164.startsWith("+237")) return e164.substring(4);
+        if (e164.startsWith("+"))   return e164.substring(1);
+        return e164;
     }
 
     private String corpsEmailOtp(String otp, int expirationMinutes) {

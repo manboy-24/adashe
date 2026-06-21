@@ -31,6 +31,20 @@ public class AuthController {
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.inscrire(request));
     }
 
+    @PostMapping("/firebase/inscrire")
+    @Operation(summary = "S'inscrire avec vérification Firebase Phone Auth — PIN inclus dans la requête")
+    public ResponseEntity<ApiResponse<AuthResponse>> inscrireFirebase(
+            @Valid @RequestBody FirebaseInscriptionRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.inscrireAvecFirebase(request));
+    }
+
+    @PostMapping("/pin/reset/firebase")
+    @Operation(summary = "Réinitialiser le PIN via Firebase Phone Auth ou Email Link")
+    public ResponseEntity<ApiResponse<AuthResponse>> resetPinFirebase(
+            @Valid @RequestBody FirebasePinResetRequest request) {
+        return ResponseEntity.ok(pinAuthService.reinitialiserPinFirebase(request));
+    }
+
     @PostMapping("/verifier-otp")
     @Operation(summary = "Vérifier le code OTP reçu par SMS")
     public ResponseEntity<ApiResponse<AuthResponse>> verifierOtp(

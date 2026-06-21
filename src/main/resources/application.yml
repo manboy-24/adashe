@@ -49,7 +49,7 @@ pin:
 # Web Client ID — utilisé pour vérifier les ID tokens envoyés depuis l'app Android
 # Client Secret : variable d'environnement GOOGLE_CLIENT_SECRET (jamais ici)
 google:
-  client-id: 430345444474-g8itfddq5ec4mu9fiuijvij1p43o66c6.apps.googleusercontent.com
+  client-id: 508168838926-d0vcfk2fv7n55dttf7ijboq4d0i3vuvu.apps.googleusercontent.com
 
 # ── Firebase ───────────────────────────────────────────────────────────────────
 firebase:

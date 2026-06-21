@@ -1,22 +1,19 @@
 package com.tontine.config;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.apache.catalina.connector.Request;
+import org.apache.catalina.connector.Response;
+import org.apache.catalina.valves.ValveBase;
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
 
+import jakarta.servlet.ServletException;
 import java.io.IOException;
-import java.io.PrintWriter;
 
 /**
- * Sert /.well-known/assetlinks.json AVANT l'application du context-path /api.
- * Requis pour les Android App Links — Google/Android vérifie ce fichier à la
- * racine du domaine (pas sous /api/).
- *
- * URL finale : https://api.adashcash.com/.well-known/assetlinks.json
+ * Sert /.well-known/assetlinks.json à la racine du domaine via un Engine Valve Tomcat,
+ * AVANT l'application du context-path /api — requis pour Android App Links.
  */
 @Configuration
 public class AssetLinksConfig {
@@ -35,32 +32,19 @@ public class AssetLinksConfig {
             """;
 
     @Bean
-    public FilterRegistrationBean<Filter> assetLinksFilter() {
-        FilterRegistrationBean<Filter> bean = new FilterRegistrationBean<>();
-        bean.setFilter(new Filter() {
+    public WebServerFactoryCustomizer<TomcatServletWebServerFactory> assetLinksCustomizer() {
+        return factory -> factory.addEngineValves(new ValveBase() {
             @Override
-            public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
-                    throws IOException, ServletException {
-                HttpServletRequest  httpReq = (HttpServletRequest)  req;
-                HttpServletResponse httpRes = (HttpServletResponse) res;
-
-                String uri = httpReq.getRequestURI();
-                if ("/.well-known/assetlinks.json".equals(uri)) {
-                    httpRes.setContentType("application/json");
-                    httpRes.setCharacterEncoding("UTF-8");
-                    httpRes.setHeader("Cache-Control", "public, max-age=86400");
-                    try (PrintWriter w = httpRes.getWriter()) {
-                        w.print(ASSET_LINKS_JSON);
-                    }
+            public void invoke(Request request, Response response) throws IOException, ServletException {
+                if ("/.well-known/assetlinks.json".equals(request.getRequestURI())) {
+                    response.setContentType("application/json");
+                    response.setCharacterEncoding("UTF-8");
+                    response.addHeader("Cache-Control", "public, max-age=86400");
+                    response.getWriter().print(ASSET_LINKS_JSON);
                     return;
                 }
-                chain.doFilter(req, res);
+                getNext().invoke(request, response);
             }
         });
-        // URL pattern au niveau conteneur — intercepté AVANT le context-path /api
-        bean.addUrlPatterns("/.well-known/assetlinks.json");
-        bean.setOrder(Ordered.HIGHEST_PRECEDENCE);
-        bean.setName("assetLinksFilter");
-        return bean;
     }
 }

@@ -24,6 +24,13 @@ public class AuthController {
     private final PinAuthService pinAuthService;
     private final SecurityUtil securityUtil;
 
+    @GetMapping("/existe")
+    @Operation(summary = "Vérifie si un numéro de téléphone est déjà enregistré")
+    public ResponseEntity<ApiResponse<Boolean>> existe(@RequestParam String telephone) {
+        boolean existe = authService.telephoneExiste(telephone);
+        return ResponseEntity.ok(ApiResponse.success(existe, existe ? "Compte trouvé" : "Aucun compte"));
+    }
+
     @PostMapping("/inscrire")
     @Operation(summary = "S'inscrire — création de compte directe, PIN à définir ensuite")
     public ResponseEntity<ApiResponse<AuthResponse>> inscrire(

@@ -43,6 +43,7 @@ public class SecurityConfig {
             "/auth/firebase/inscrire",
             "/auth/refresh-token",
             "/auth/google",
+            "/auth/existe",
             "/paiements/webhook/**",
             "/dons/webhook/**",
             "/actuator/health",

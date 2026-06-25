@@ -10,4 +10,5 @@ public interface AuthService {
     ApiResponse<AuthResponse> rafraichirToken(String refreshToken);
     ApiResponse<String> deconnecter(Long userId);
     ApiResponse<GoogleAuthResponse> connexionGoogle(GoogleAuthRequest request);
+    boolean telephoneExiste(String telephone);
 }

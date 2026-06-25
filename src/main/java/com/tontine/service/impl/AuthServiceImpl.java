@@ -379,6 +379,11 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
+    @Override
+    public boolean telephoneExiste(String telephone) {
+        return utilisateurRepository.existsByTelephone(telephone);
+    }
+
     /** SHA-256 du token — stocké en base, jamais le JWT brut. */
     private String hashToken(String token) {
         try {

@@ -97,7 +97,7 @@ public class TontineServiceImpl implements TontineService {
         membreRepository.save(membreCreateur);
 
         log.info("Tontine créée: {} par userId={}", tontine.getId(), createurId);
-        return toResponse(tontine);
+        return toResponse(tontine, createurId);
     }
 
     // ── Récupération — FILTRÉE PAR MEMBRE ────────────────────────────────────
@@ -137,12 +137,10 @@ public class TontineServiceImpl implements TontineService {
                         Collectors.mapping(r -> (Long) r[1], Collectors.toSet())));
         tontines.forEach(t -> payesParTontine.putIfAbsent(t.getId(), Collections.emptySet()));
 
-        Long currentUserId = null;
-        try { currentUserId = securityUtil.getCurrentUserId(); } catch (Exception ignored) {}
-        final Long finalCurrentUserId = currentUserId;
-
+        // Réutilise le userId du paramètre (déjà authentifié par le contrôleur)
+        // pour éviter un second appel SecurityContext et garantir la cohérence.
         return tontines.stream()
-                .map(t -> toResponseBatch(t, totauxParTontine, distribuesParTontine, membresParTontine, totauxParMembre, payesParTontine, finalCurrentUserId))
+                .map(t -> toResponseBatch(t, totauxParTontine, distribuesParTontine, membresParTontine, totauxParMembre, payesParTontine, userId))
                 .collect(Collectors.toList());
     }
 
@@ -153,7 +151,7 @@ public class TontineServiceImpl implements TontineService {
                 .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
         // Vérifier appartenance stricte
         verifierAccesTontine(tontineId, userId);
-        return toResponse(tontine);
+        return toResponse(tontine, userId);
     }
 
     // ── Membres ───────────────────────────────────────────────────────────────
@@ -362,7 +360,7 @@ public class TontineServiceImpl implements TontineService {
 
         tontineRepository.save(tontine);
         log.info("Tontine {} modifiée par userId={}", tontineId, adminId);
-        return toResponse(tontine);
+        return toResponse(tontine, adminId);
     }
 
     @Override
@@ -382,7 +380,7 @@ public class TontineServiceImpl implements TontineService {
 
         tontineRepository.save(tontine);
         log.info("Tontine {} configurée (commission={}%) par userId={}", tontineId, request.getCommissionPourcent(), createurId);
-        return toResponse(tontine);
+        return toResponse(tontine, createurId);
     }
 
     @Override
@@ -424,7 +422,7 @@ public class TontineServiceImpl implements TontineService {
                 com.tontine.enums.NotificationType.NOUVEAU_CYCLE)
         );
 
-        return toResponse(tontine);
+        return toResponse(tontine, adminId);
     }
 
     @Override
@@ -448,7 +446,7 @@ public class TontineServiceImpl implements TontineService {
         );
 
         log.info("Tontine {} terminée manuellement par userId={}", tontineId, createurId);
-        return toResponse(tontine);
+        return toResponse(tontine, createurId);
     }
 
     // ── Cotisations — CRÉATEUR UNIQUEMENT ─────────────────────────────────────
@@ -1172,19 +1170,15 @@ public class TontineServiceImpl implements TontineService {
 
     // ── Mappers (single entity) ───────────────────────────────────────────────
 
-    private TontineResponse toResponse(Tontine t) {
+    private TontineResponse toResponse(Tontine t, Long userId) {
         BigDecimal total = cotisationRepository.sumMontantPayeByTontineId(t.getId());
         List<MembreTontine> membresRaw = membreRepository
                 .findByTontineIdAndStatutMembreNot(t.getId(), MembreStatut.RETIRE);
         List<MembreResponse> membres = membresRaw.stream()
                 .map(m -> toMembreResponse(m, t)).collect(Collectors.toList());
 
-        Long currentUserId = null;
-        try { currentUserId = securityUtil.getCurrentUserId(); } catch (Exception ignored) {}
-        // Calcul depuis la liste de membres (pas de proxy lazy sur t.getCreateur())
-        final Long uid = currentUserId;
-        boolean estCreateur = uid != null && membresRaw.stream()
-                .anyMatch(m -> m.getUtilisateur().getId().equals(uid)
+        boolean estCreateur = userId != null && membresRaw.stream()
+                .anyMatch(m -> m.getUtilisateur().getId().equals(userId)
                         && m.getRoleMembreTontine() == MembreTontineRole.CREATEUR);
 
         BigDecimal distribue = tirageRepository.sumMontantDistribueByTontineId(t.getId());

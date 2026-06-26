@@ -291,10 +291,6 @@ public class AuthServiceImpl implements AuthService {
     // ── Déconnexion : invalide le refresh token et toutes les sessions ───────
     @Override
     public ApiResponse<String> deconnecter(Long userId) {
-        Long currentUserId = securityUtil.getCurrentUserId();
-        if (!currentUserId.equals(userId)) {
-            throw new ForbiddenException("Vous ne pouvez vous déconnecter que de votre propre compte");
-        }
         utilisateurRepository.findById(userId).ifPresent(u -> {
             u.setRefreshToken(null);
             u.setRefreshTokenExpiration(null);

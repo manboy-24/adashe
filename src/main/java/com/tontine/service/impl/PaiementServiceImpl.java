@@ -24,6 +24,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import java.net.URLEncoder;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
@@ -166,59 +168,34 @@ public class PaiementServiceImpl implements PaiementService {
                 .build();
         paiement = paiementRepository.save(paiement);
 
-        // Appeler l'API Monetbil
-        try {
-            log.info("Initiation paiement: operateur={} numero={} montant={}", request.getOperateur(), request.getNumeroPaiement(), request.getMontant());
-            MultiValueMap<String, String> payload = buildMonetbilPayload(request, reference, membre, tontine);
-            log.info("Payload Monetbil envoyé: {}", payload);
-            JsonNode response = monetbilGateway.callApi(monetbilWidgetUrl(), payload);
+        // Construire l'URL widget Monetbil (GET) — le backend ne contacte pas Monetbil,
+        // l'app ouvre cette URL dans le navigateur et Monetbil appelle notre webhook.
+        String phone = buildPhone(request.getNumeroPaiement());
+        String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+                "tontine_" + tontine.getId(), "membre_" + membre.getId());
 
-            // Widget v2.1 : "payment_url" dans le corps JSON — succès si le champ est présent
-            String paymentUrl = response.path("payment_url").asText("");
-            int success = paymentUrl.isBlank() ? response.path("success").asInt(0) : 1;
-            if (success == 1) {
-                String widgetUrl   = paymentUrl.isBlank() ? response.path("widget_url").asText("") : paymentUrl;
-                String paymentRef  = response.path("payment_ref").asText(reference);
+        paiement.setGatewayPaymentUrl(widgetUrl);
+        paiementRepository.save(paiement);
 
-                paiement.setGatewayTransactionId(paymentRef);
-                paiement.setGatewayPaymentUrl(widgetUrl);
-                paiementRepository.save(paiement);
+        String instructions = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
+                ? "Confirmez le paiement sur votre téléphone MTN MoMo."
+                : "Confirmez le paiement via Orange Money.";
 
-                String instructions = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                        ? "Confirmez le paiement sur votre téléphone MTN MoMo."
-                        : "Confirmez le paiement via Orange Money.";
+        log.info("Paiement Monetbil initié (widget URL): ref={} opérateur={}", reference, request.getOperateur());
 
-                log.info("Paiement Monetbil initié: ref={} opérateur={}", reference, request.getOperateur());
-
-                return PaiementResponse.builder()
-                        .id(paiement.getId())
-                        .referenceTransaction(reference)
-                        .montant(request.getMontant())
-                        .devise("XAF")
-                        .operateur(request.getOperateur())
-                        .statut(PaiementStatus.EN_ATTENTE)
-                        .numeroPaieur(request.getNumeroPaiement())
-                        .urlPaiement(widgetUrl.isBlank() ? null : widgetUrl)
-                        .messageOperateur("Paiement initié via Monetbil.")
-                        .instructions(instructions)
-                        .createdAt(paiement.getCreatedAt())
-                        .build();
-            } else {
-                String message = response.path("message").asText("Erreur opérateur");
-                paiement.setStatut(PaiementStatus.ANNULE);
-                paiement.setMessageOperateur(message);
-                paiementRepository.save(paiement);
-                throw new BadRequestException("Échec initialisation paiement: " + message);
-            }
-
-        } catch (BadRequestException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Erreur API Monetbil: {}", e.getMessage());
-            paiement.setStatut(PaiementStatus.ANNULE);
-            paiementRepository.save(paiement);
-            throw new BadRequestException("Service de paiement temporairement indisponible");
-        }
+        return PaiementResponse.builder()
+                .id(paiement.getId())
+                .referenceTransaction(reference)
+                .montant(request.getMontant())
+                .devise("XAF")
+                .operateur(request.getOperateur())
+                .statut(PaiementStatus.EN_ATTENTE)
+                .numeroPaieur(request.getNumeroPaiement())
+                .urlPaiement(widgetUrl)
+                .messageOperateur("Ouvrez l'URL pour payer via Monetbil.")
+                .instructions(instructions)
+                .createdAt(paiement.getCreatedAt())
+                .build();
     }
 
     // ── Paiement espèces : admin paie en MoMo pour un membre ─────────────────
@@ -314,55 +291,33 @@ public class PaiementServiceImpl implements PaiementService {
                 .build();
         paiement = paiementRepository.save(paiement);
 
-        try {
-            log.info("Paiement espèces admin: operateur={} numero={} montant={}",
-                    request.getOperateurReel(), request.getNumeroPaiement(), request.getMontant());
+        // Construire l'URL widget Monetbil (GET)
+        String espPhone = buildPhone(request.getNumeroPaiement());
+        String espWidgetUrl = buildWidgetGetUrl(request.getMontant(), espPhone, reference,
+                "tontine_" + tontine.getId(), "membre_" + membre.getId());
 
-            MultiValueMap<String, String> payload = buildMonetbilPayloadRaw(
-                    request.getOperateurReel(), request.getNumeroPaiement(),
-                    request.getMontant(), reference, membre, tontine);
+        paiement.setGatewayPaymentUrl(espWidgetUrl);
+        paiementRepository.save(paiement);
 
-            JsonNode response = monetbilGateway.callApi(monetbilWidgetUrl(), payload);
-            String espPaymentUrl = response.path("payment_url").asText("");
-            int success = espPaymentUrl.isBlank() ? response.path("success").asInt(0) : 1;
+        String instructions = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY
+                ? "Confirmez le paiement sur votre téléphone MTN MoMo."
+                : "Confirmez le paiement via Orange Money.";
 
-            if (success == 1) {
-                String espWidgetUrl = espPaymentUrl.isBlank() ? response.path("widget_url").asText("") : espPaymentUrl;
-                paiement.setGatewayTransactionId(response.path("payment_ref").asText(reference));
-                paiement.setGatewayPaymentUrl(espWidgetUrl);
-                paiementRepository.save(paiement);
+        log.info("Paiement espèces admin initié (widget URL): ref={}", reference);
 
-                String instructions = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY
-                        ? "Confirmez le paiement sur votre téléphone MTN MoMo."
-                        : "Confirmez le paiement via Orange Money.";
-
-                return PaiementResponse.builder()
-                        .id(paiement.getId())
-                        .referenceTransaction(reference)
-                        .montant(request.getMontant())
-                        .devise("XAF")
-                        .operateur(PaiementMode.ESPECES)
-                        .statut(PaiementStatus.EN_ATTENTE)
-                        .numeroPaieur(request.getNumeroPaiement())
-                        .instructions(instructions)
-                        .payePourCompte(true)
-                        .createdAt(paiement.getCreatedAt())
-                        .build();
-            } else {
-                String message = response.path("message").asText("Erreur opérateur");
-                paiement.setStatut(PaiementStatus.ANNULE);
-                paiement.setMessageOperateur(message);
-                paiementRepository.save(paiement);
-                throw new BadRequestException("Échec initialisation paiement: " + message);
-            }
-        } catch (BadRequestException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Erreur API Monetbil (espèces): {}", e.getMessage());
-            paiement.setStatut(PaiementStatus.ANNULE);
-            paiementRepository.save(paiement);
-            throw new BadRequestException("Service de paiement temporairement indisponible");
-        }
+        return PaiementResponse.builder()
+                .id(paiement.getId())
+                .referenceTransaction(reference)
+                .montant(request.getMontant())
+                .devise("XAF")
+                .operateur(PaiementMode.ESPECES)
+                .statut(PaiementStatus.EN_ATTENTE)
+                .numeroPaieur(request.getNumeroPaiement())
+                .urlPaiement(espWidgetUrl)
+                .instructions(instructions)
+                .payePourCompte(true)
+                .createdAt(paiement.getCreatedAt())
+                .build();
     }
 
     // ── Traiter le callback Monetbil ─────────────────────────────────────────
@@ -593,43 +548,24 @@ public class PaiementServiceImpl implements PaiementService {
 
     // ── Helpers privés ────────────────────────────────────────────────────────
 
-    /** Construit le payload form-urlencoded pour l'API Monetbil. */
-    private MultiValueMap<String, String> buildMonetbilPayload(
-            PaiementMobileMoneyRequest request,
-            String reference,
-            MembreTontine membre,
-            Tontine tontine) {
-        return buildMonetbilPayloadRaw(
-                request.getOperateur(), request.getNumeroPaiement(),
-                request.getMontant(), reference, membre, tontine);
-    }
-
-    private MultiValueMap<String, String> buildMonetbilPayloadRaw(
-            PaiementMode operateur,
-            String numeroPaiement,
-            BigDecimal montant,
-            String reference,
-            MembreTontine membre,
-            Tontine tontine) {
-
-        String operator = operateur == PaiementMode.MTN_MOBILE_MONEY ? "MTN_MOMO_CM" : "ORANGE_CM";
-
-        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+    private String buildPhone(String numeroPaiement) {
         String phone = numeroPaiement.replaceAll("\\s+", "");
         if (!phone.startsWith("237")) phone = "237" + phone;
+        return phone;
+    }
 
-        params.add("service",     monetbilServiceKey);
-        params.add("amount",      String.valueOf(montant.longValue()));
-        params.add("phone",       phone);
-        params.add("locale",      "fr");
-        params.add("item_ref",    reference);
-        params.add("payment_ref", reference);
-        params.add("user1",       "tontine_" + tontine.getId());
-        params.add("user2",       "membre_"  + membre.getId());
-        params.add("notify_url",  monetbilNotifyUrl);
-        params.add("return_url",  monetbilReturnUrl);
-
-        return params;
+    private String buildWidgetGetUrl(BigDecimal montant, String phone, String reference,
+                                     String user1, String user2) {
+        return monetbilWidgetUrl()
+                + "?amount="      + montant.longValue()
+                + "&phone="       + phone
+                + "&locale=fr"
+                + "&item_ref="    + URLEncoder.encode(reference, StandardCharsets.UTF_8)
+                + "&payment_ref=" + URLEncoder.encode(reference, StandardCharsets.UTF_8)
+                + "&user1="       + URLEncoder.encode(user1, StandardCharsets.UTF_8)
+                + "&user2="       + URLEncoder.encode(user2, StandardCharsets.UTF_8)
+                + "&notify_url="  + URLEncoder.encode(monetbilNotifyUrl, StandardCharsets.UTF_8)
+                + "&return_url="  + URLEncoder.encode(monetbilReturnUrl, StandardCharsets.UTF_8);
     }
 
     /**

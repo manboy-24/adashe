@@ -127,7 +127,11 @@ public class PaiementServiceImpl implements PaiementService {
                     });
         }
 
-        // Rejeter si un paiement EN_ATTENTE existe déjà pour ce membre (anti-concurrent)
+        // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
+        paiementRepository.annulerPaiementsExpiresParMembre(
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(30));
+
+        // Rejeter si un paiement EN_ATTENTE récent existe encore (anti-concurrent)
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");
         }
@@ -294,6 +298,10 @@ public class PaiementServiceImpl implements PaiementService {
         if (dejaPaye) {
             throw new BadRequestException("La cotisation pour ce cycle est déjà enregistrée");
         }
+
+        // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
+        paiementRepository.annulerPaiementsExpiresParMembre(
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(30));
 
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");

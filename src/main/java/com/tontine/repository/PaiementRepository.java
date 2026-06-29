@@ -5,9 +5,11 @@ import com.tontine.enums.PaiementStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,7 +32,12 @@ public interface PaiementRepository extends JpaRepository<Paiement, Long> {
     boolean existsByMembreIdAndStatut(Long membreId, PaiementStatus statut);
 
     /** Paiements EN_ATTENTE créés avant une date limite (pour expiration automatique). */
-    List<Paiement> findByStatutAndCreatedAtBefore(PaiementStatus statut, java.time.LocalDateTime limit);
+    List<Paiement> findByStatutAndCreatedAtBefore(PaiementStatus statut, LocalDateTime limit);
+
+    /** Annule les paiements EN_ATTENTE expirés d'un membre (>30 min) avant d'en créer un nouveau. */
+    @Modifying
+    @Query("UPDATE Paiement p SET p.statut = com.tontine.enums.PaiementStatus.ANNULE, p.messageOperateur = 'Expiré — annulé automatiquement' WHERE p.membre.id = :membreId AND p.statut = :statut AND p.createdAt < :limit")
+    void annulerPaiementsExpiresParMembre(@Param("membreId") Long membreId, @Param("statut") PaiementStatus statut, @Param("limit") LocalDateTime limit);
 
     /** Tous les paiements d'un utilisateur, toutes tontines confondues. */
     @Query("SELECT p FROM Paiement p JOIN FETCH p.membre m JOIN FETCH m.utilisateur u WHERE u.id = :userId ORDER BY p.createdAt DESC")

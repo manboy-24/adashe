@@ -637,9 +637,10 @@ public class PaiementServiceImpl implements PaiementService {
     // ── Helpers privés ────────────────────────────────────────────────────────
 
     private String buildPhone(String numeroPaiement) {
-        String phone = numeroPaiement.replaceAll("\\s+", "");
-        if (!phone.startsWith("237")) phone = "237" + phone;
-        return phone;
+        String phone = numeroPaiement.replaceAll("[^0-9]", ""); // supprime +, espaces, tirets
+        if (phone.startsWith("00237")) phone = phone.substring(5);
+        else if (phone.startsWith("237") && phone.length() > 9) phone = phone.substring(3);
+        return "237" + phone;
     }
 
     private String buildWidgetGetUrl(BigDecimal montant, String phone, String reference,

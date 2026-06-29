@@ -1,5 +1,6 @@
 package com.tontine.controller;
 
+import com.tontine.dto.request.ConfirmerPaiementMonetbilRequest;
 import com.tontine.dto.request.PaiementEspecesRequest;
 import com.tontine.dto.request.PaiementMobileMoneyRequest;
 import com.tontine.dto.response.*;
@@ -42,6 +43,14 @@ public class PaiementController {
     @Operation(summary = "Mes paiements")
     public ResponseEntity<List<PaiementResponse>> mesPaiements() {
         return ResponseEntity.ok(paiementService.getMesPaiements(securityUtil.getCurrentUserId()));
+    }
+
+    @PostMapping("/monetbil/confirmer")
+    @Operation(summary = "Confirmer un paiement après onPaymentSuccess du SDK Android Monetbil")
+    public ResponseEntity<PaiementResponse> confirmerMonetbil(
+            @Valid @RequestBody ConfirmerPaiementMonetbilRequest request) {
+        return ResponseEntity.ok(
+                paiementService.confirmerPaiementMonetbil(request, securityUtil.getCurrentUserId()));
     }
 
     // ── Webhooks (sans JWT — appelés par Monetbil) ────────────────────────────

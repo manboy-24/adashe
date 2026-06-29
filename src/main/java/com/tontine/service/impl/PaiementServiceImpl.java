@@ -2,6 +2,7 @@ package com.tontine.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tontine.dto.request.ConfirmerPaiementMonetbilRequest;
 import com.tontine.dto.request.PaiementEspecesRequest;
 import com.tontine.dto.request.PaiementMobileMoneyRequest;
 import com.tontine.dto.response.*;
@@ -55,6 +56,9 @@ public class PaiementServiceImpl implements PaiementService {
 
     @Value("${monetbil.api-url:https://api.monetbil.com/payment/v1/placePayment}")
     private String monetbilApiUrl;
+
+    @Value("${monetbil.check-payment-url:https://api.monetbil.com/payment/v1/checkPayment}")
+    private String monetbilCheckPaymentUrl;
 
     @Value("${monetbil.notify-url}")
     private String monetbilNotifyUrl;
@@ -480,6 +484,97 @@ public class PaiementServiceImpl implements PaiementService {
             // PENDING — rien à faire, on attend le callback final
             log.info("Paiement en attente Monetbil: ref={}", reference);
             return ApiResponse.success(null, "En attente");
+        }
+    }
+
+    // ── Confirmation SDK Android (après onPaymentSuccess) ────────────────────
+
+    @Override
+    @Transactional
+    public PaiementResponse confirmerPaiementMonetbil(ConfirmerPaiementMonetbilRequest request, Long userId) {
+        // Verrou pessimiste — évite la concurrence avec le webhook Monetbil
+        Paiement paiement = paiementRepository.findByReferenceTransactionForUpdate(request.getItemRef())
+                .orElseThrow(() -> new ResourceNotFoundException("Paiement non trouvé : " + request.getItemRef()));
+
+        if (!paiement.getMembre().getUtilisateur().getId().equals(userId)) {
+            throw new ForbiddenException("Vous ne pouvez confirmer que votre propre paiement");
+        }
+
+        // Idempotence : webhook a peut-être déjà traité ce paiement
+        if (paiement.getStatut() == PaiementStatus.PAYE) {
+            return toResponse(paiement);
+        }
+        if (paiement.getStatut() == PaiementStatus.ANNULE) {
+            throw new BadRequestException("Ce paiement a été annulé");
+        }
+
+        // Vérifier auprès de Monetbil
+        try {
+            MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+            params.add("paymentId", request.getTransactionUuid());
+            JsonNode result = monetbilGateway.callApi(monetbilCheckPaymentUrl, params);
+
+            int status = result.path("status").asInt(0);
+            // 1 = succès live, 7 = succès test
+            if (status == 1 || status == 7) {
+                paiement.setStatut(PaiementStatus.PAYE);
+                paiement.setDatePaiement(LocalDateTime.now());
+                paiement.setGatewayTransactionId(request.getTransactionUuid());
+                paiement.setMessageOperateur("Confirmé via SDK Android Monetbil");
+                paiementRepository.save(paiement);
+
+                enregistrerCotisationApresPaiement(paiement);
+
+                if (paiement.getMontantAmende() != null
+                        && paiement.getMontantAmende().compareTo(BigDecimal.ZERO) > 0) {
+                    VirementAmende virement = virementAmendeService.creerVirementEnAttente(
+                            paiement, paiement.getMontantAmende());
+                    Long virementId = virement.getId();
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            virementAmendeService.effectuerVirementAsyncParId(virementId);
+                        }
+                    });
+                }
+
+                notificationService.creerNotification(
+                        paiement.getMembre().getUtilisateur(),
+                        paiement.getMembre().getTontine(),
+                        "✅ Paiement confirmé",
+                        "Votre cotisation de " + paiement.getMontant() + " XAF a été confirmée.",
+                        com.tontine.enums.NotificationType.PAIEMENT_RECU
+                );
+
+                Utilisateur createur = paiement.getMembre().getTontine().getCreateur();
+                if (createur != null && !createur.getId().equals(paiement.getMembre().getUtilisateur().getId())) {
+                    notificationService.creerNotification(
+                            createur,
+                            paiement.getMembre().getTontine(),
+                            "💰 Cotisation reçue",
+                            paiement.getMembre().getUtilisateur().getPrenom() + " "
+                                    + paiement.getMembre().getUtilisateur().getNom()
+                                    + " a payé " + paiement.getMontant() + " XAF via Mobile Money.",
+                            com.tontine.enums.NotificationType.PAIEMENT_RECU
+                    );
+                }
+
+                log.info("Paiement confirmé via SDK Android: ref={}", request.getItemRef());
+                return toResponse(paiement);
+
+            } else {
+                // -1 / 0 / 8 / 9 = annulé ou échoué
+                paiement.setStatut(PaiementStatus.ANNULE);
+                paiement.setMessageOperateur("Paiement non abouti (statut Monetbil: " + status + ")");
+                paiementRepository.save(paiement);
+                throw new BadRequestException("Paiement non confirmé par Monetbil (statut: " + status + ")");
+            }
+
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Erreur checkPayment Monetbil: {}", e.getMessage());
+            throw new BadRequestException("Impossible de vérifier le paiement auprès de Monetbil");
         }
     }
 

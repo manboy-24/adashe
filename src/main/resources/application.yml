@@ -60,8 +60,9 @@ firebase:
 monetbil:
   service-key:    ${MONETBIL_SERVICE_KEY:}
   service-secret: ${MONETBIL_SERVICE_SECRET:}
-  api-url:        https://api.monetbil.com/payment/v1/placePayment
-  transfer-url:   https://api.monetbil.com/transfer/v1/process
+  api-url:            https://api.monetbil.com/payment/v1/placePayment
+  check-payment-url:  https://api.monetbil.com/payment/v1/checkPayment
+  transfer-url:       https://api.monetbil.com/transfer/v1/process
   notify-url:     ${MONETBIL_NOTIFY_URL:}
   don-notify-url: ${MONETBIL_DON_NOTIFY_URL:${MONETBIL_NOTIFY_URL:}}
   return-url:     ${MONETBIL_RETURN_URL:}

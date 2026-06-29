@@ -54,8 +54,10 @@ public class PaiementServiceImpl implements PaiementService {
     @Value("${monetbil.service-secret}")
     private String monetbilServiceSecret;
 
-    @Value("${monetbil.api-url:https://api.monetbil.com/payment/v1/placePayment}")
-    private String monetbilApiUrl;
+    // URL construite dynamiquement : https://www.monetbil.com/widget/v2.1/{service_key}
+    private String monetbilWidgetUrl() {
+        return "https://www.monetbil.com/widget/v2.1/" + monetbilServiceKey;
+    }
 
     @Value("${monetbil.check-payment-url:https://api.monetbil.com/payment/v1/checkPayment}")
     private String monetbilCheckPaymentUrl;
@@ -169,7 +171,7 @@ public class PaiementServiceImpl implements PaiementService {
             log.info("Initiation paiement: operateur={} numero={} montant={}", request.getOperateur(), request.getNumeroPaiement(), request.getMontant());
             MultiValueMap<String, String> payload = buildMonetbilPayload(request, reference, membre, tontine);
             log.info("Payload Monetbil envoyé: {}", payload);
-            JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
+            JsonNode response = monetbilGateway.callApi(monetbilWidgetUrl(), payload);
 
             // Widget v2.1 : "payment_url" dans le corps JSON — succès si le champ est présent
             String paymentUrl = response.path("payment_url").asText("");
@@ -320,7 +322,7 @@ public class PaiementServiceImpl implements PaiementService {
                     request.getOperateurReel(), request.getNumeroPaiement(),
                     request.getMontant(), reference, membre, tontine);
 
-            JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
+            JsonNode response = monetbilGateway.callApi(monetbilWidgetUrl(), payload);
             String espPaymentUrl = response.path("payment_url").asText("");
             int success = espPaymentUrl.isBlank() ? response.path("success").asInt(0) : 1;
 

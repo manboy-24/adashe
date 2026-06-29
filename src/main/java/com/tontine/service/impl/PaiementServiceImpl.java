@@ -170,31 +170,68 @@ public class PaiementServiceImpl implements PaiementService {
         paiement = paiementRepository.save(paiement);
 
         String phone = buildPhone(request.getNumeroPaiement());
-        String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
-                "tontine_" + tontine.getId(), "membre_" + membre.getId());
 
-        paiement.setGatewayPaymentUrl(widgetUrl);
-        paiementRepository.save(paiement);
+        if (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY) {
+            // ── MTN : push direct sur le téléphone via MADAPI ────────────────
+            String desc = "Cotisation " + tontine.getNom() + " cycle " + targetCycle;
+            Map<String, Object> mtnResult = mtnService.requestToPay(phone, request.getMontant(), reference, desc);
 
-        String instructions = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                ? "Ouvrez le lien et confirmez sur votre téléphone MTN MoMo."
-                : "Ouvrez le lien et confirmez via Orange Money.";
-
-        log.info("Paiement widget URL initié: ref={} opérateur={}", reference, request.getOperateur());
-
-        return PaiementResponse.builder()
-                .id(paiement.getId())
-                .referenceTransaction(reference)
-                .montant(request.getMontant())
-                .devise("XAF")
-                .operateur(request.getOperateur())
-                .statut(PaiementStatus.EN_ATTENTE)
-                .numeroPaieur(request.getNumeroPaiement())
-                .urlPaiement(widgetUrl)
-                .messageOperateur("Paiement initié.")
-                .instructions(instructions)
-                .createdAt(paiement.getCreatedAt())
-                .build();
+            if (Boolean.TRUE.equals(mtnResult.get("success"))) {
+                paiement.setGatewayTransactionId((String) mtnResult.getOrDefault("referenceOperateur", reference));
+                paiementRepository.save(paiement);
+                log.info("Paiement MTN push initié: ref={}", reference);
+                return PaiementResponse.builder()
+                        .id(paiement.getId())
+                        .referenceTransaction(reference)
+                        .montant(request.getMontant())
+                        .devise("XAF")
+                        .operateur(PaiementMode.MTN_MOBILE_MONEY)
+                        .statut(PaiementStatus.EN_ATTENTE)
+                        .numeroPaieur(request.getNumeroPaiement())
+                        .messageOperateur("Demande envoyée.")
+                        .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
+                        .createdAt(paiement.getCreatedAt())
+                        .build();
+            } else {
+                // Fallback widget URL si MTN push échoue
+                log.warn("MTN push échoué ({}), fallback widget URL", mtnResult.get("message"));
+                String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+                        "tontine_" + tontine.getId(), "membre_" + membre.getId());
+                paiement.setGatewayPaymentUrl(widgetUrl);
+                paiementRepository.save(paiement);
+                return PaiementResponse.builder()
+                        .id(paiement.getId())
+                        .referenceTransaction(reference)
+                        .montant(request.getMontant())
+                        .devise("XAF")
+                        .operateur(PaiementMode.MTN_MOBILE_MONEY)
+                        .statut(PaiementStatus.EN_ATTENTE)
+                        .numeroPaieur(request.getNumeroPaiement())
+                        .urlPaiement(widgetUrl)
+                        .instructions("Confirmez le paiement sur votre téléphone MTN MoMo.")
+                        .createdAt(paiement.getCreatedAt())
+                        .build();
+            }
+        } else {
+            // ── Orange Money : URL widget Monetbil (GET) ─────────────────────
+            String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+                    "tontine_" + tontine.getId(), "membre_" + membre.getId());
+            paiement.setGatewayPaymentUrl(widgetUrl);
+            paiementRepository.save(paiement);
+            log.info("Paiement Orange widget URL initié: ref={}", reference);
+            return PaiementResponse.builder()
+                    .id(paiement.getId())
+                    .referenceTransaction(reference)
+                    .montant(request.getMontant())
+                    .devise("XAF")
+                    .operateur(PaiementMode.ORANGE_MONEY)
+                    .statut(PaiementStatus.EN_ATTENTE)
+                    .numeroPaieur(request.getNumeroPaiement())
+                    .urlPaiement(widgetUrl)
+                    .instructions("Confirmez le paiement via Orange Money.")
+                    .createdAt(paiement.getCreatedAt())
+                    .build();
+        }
     }
 
     // ── Paiement espèces : admin paie en MoMo pour un membre ─────────────────

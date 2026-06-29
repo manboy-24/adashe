@@ -33,19 +33,17 @@ public class MtnMobileMoneyService {
     public String obtenirAccessToken() {
         MobileMoneyConfig.Mtn mtn = config.getMtn();
 
-        String credentials = mtn.getApiUser() + ":" + mtn.getApiKey();
-        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
-
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Basic " + encoded);
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
+        // grant_type en query param (Apigee MTN) — client_id/secret en form body
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("grant_type", "client_credentials");
+        body.add("client_id",     mtn.getApiUser());
+        body.add("client_secret", mtn.getApiKey());
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(
-                mtn.getBaseUrl() + "/oauth/access_token",
+                "https://api.mtn.com/v1/oauth/access_token?grant_type=client_credentials",
                 new HttpEntity<>(body, headers),
                 Map.class
             );

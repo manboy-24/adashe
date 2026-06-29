@@ -612,17 +612,18 @@ public class PaiementServiceImpl implements PaiementService {
         String phone = numeroPaiement.replaceAll("\\s+", "");
         if (!phone.startsWith("237")) phone = "237" + phone;
 
-        params.add("service",    monetbilServiceKey);
-        params.add("amount",     String.valueOf(montant.longValue()));
-        params.add("phone",      phone);
-        params.add("msisdn",     phone);
-        params.add("operator",   operator);
-        params.add("locale",     "fr");
-        params.add("item_ref",   reference);
-        params.add("user1",      "tontine_" + tontine.getId());
-        params.add("user2",      "membre_"  + membre.getId());
-        params.add("notify_url", monetbilNotifyUrl);
-        params.add("return_url", monetbilReturnUrl);
+        params.add("service",     monetbilServiceKey);
+        params.add("amount",      String.valueOf(montant.longValue()));
+        params.add("phonenumber", phone);   // champ attendu par placePayment API
+        params.add("phone",       phone);   // champ widget v2.1
+        params.add("msisdn",      phone);   // alias
+        params.add("operator",    operator);
+        params.add("locale",      "fr");
+        params.add("item_ref",    reference);
+        params.add("user1",       "tontine_" + tontine.getId());
+        params.add("user2",       "membre_"  + membre.getId());
+        params.add("notify_url",  monetbilNotifyUrl);
+        params.add("return_url",  monetbilReturnUrl);
 
         return params;
     }

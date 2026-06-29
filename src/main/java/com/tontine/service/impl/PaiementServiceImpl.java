@@ -760,6 +760,7 @@ public class PaiementServiceImpl implements PaiementService {
                     .datePaiement(java.time.LocalDate.now())
                     .referenceTransaction(paiement.getReferenceTransaction())
                     .modePaiement(paiement.getOperateur().name())
+                    .payePourCompte(Boolean.TRUE.equals(paiement.getPayePourCompte()))
                     .build();
             cotisationRepository.save(cotisation);
             paiement.setCotisation(cotisation);

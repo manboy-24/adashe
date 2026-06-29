@@ -46,7 +46,12 @@ public class Cotisation {
     // Référence de transaction (CinetPay, Wave, etc.) — unique pour éviter doublons webhook
     @Column(unique = true)
     private String referenceTransaction;
-    private String modePaiement;  // "WAVE", "ORANGE_MONEY", "CINETPAY", "ESPECES"
+    private String modePaiement;  // "MTN_MOBILE_MONEY", "ORANGE_MONEY", etc.
+
+    /** true si l'admin a payé pour le compte du membre (espèces remises à l'admin). */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean payePourCompte = false;
 
     @Column(nullable = false)
     @Builder.Default

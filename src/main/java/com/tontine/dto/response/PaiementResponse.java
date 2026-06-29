@@ -27,4 +27,8 @@ public class PaiementResponse {
     private LocalDateTime createdAt;
     /** true si l'admin a payé en MoMo pour le compte d'un membre (cash) */
     private Boolean payePourCompte;
+    /** Frais Monetbil prélevés (commission ~3.8% + TTA 0.2% + 4 FCFA fixe). */
+    private BigDecimal fraisGateway;
+    /** Montant total débité sur le téléphone du payeur (montant net + fraisGateway). */
+    private BigDecimal montantTotal;
 }

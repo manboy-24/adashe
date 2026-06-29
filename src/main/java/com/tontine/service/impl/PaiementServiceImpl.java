@@ -29,6 +29,7 @@ import java.net.URLEncoder;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -71,6 +72,12 @@ public class PaiementServiceImpl implements PaiementService {
 
     @Value("${monetbil.return-url}")
     private String monetbilReturnUrl;
+
+    @Value("${monetbil.taux-frais:0.042}")
+    private double tauxFrais;
+
+    @Value("${monetbil.frais-fixe:4}")
+    private long fraisFixe;
 
     // ── Initier un paiement Mobile Money ─────────────────────────────────────
 
@@ -160,11 +167,17 @@ public class PaiementServiceImpl implements PaiementService {
             }
         }
 
-        // Créer le paiement en base
+        // Calculer le montant net (cotisation + éventuelle amende) et les frais gateway
+        BigDecimal montantNet     = tontine.getMontantContribution().add(montantAmende);
+        BigDecimal montantFacture = calculerMontantFacture(montantNet);
+        BigDecimal fraisGateway   = montantFacture.subtract(montantNet);
+
+        // Créer le paiement en base (montant = net, fraisGateway = frais Monetbil)
         Paiement paiement = Paiement.builder()
                 .membre(membre)
-                .montant(request.getMontant())
+                .montant(montantNet)
                 .montantAmende(montantAmende)
+                .fraisGateway(fraisGateway)
                 .devise("XAF")
                 .operateur(request.getOperateur())
                 .statut(PaiementStatus.EN_ATTENTE)
@@ -180,7 +193,7 @@ public class PaiementServiceImpl implements PaiementService {
             // ── MTN : push automatique via api.monetbil.com/placePayment ─────
             MultiValueMap<String, String> mtnParams = new LinkedMultiValueMap<>();
             mtnParams.add("service",     monetbilServiceKey);
-            mtnParams.add("amount",      String.valueOf(request.getMontant().longValue()));
+            mtnParams.add("amount",      String.valueOf(montantFacture.longValue()));
             mtnParams.add("phonenumber", phone);
             mtnParams.add("item_ref",    reference);
             mtnParams.add("notify_url",  monetbilNotifyUrl);
@@ -193,11 +206,13 @@ public class PaiementServiceImpl implements PaiementService {
                 if ("REQUEST_ACCEPTED".equals(mtnStatus)) {
                     paiement.setGatewayTransactionId(paymentId);
                     paiementRepository.save(paiement);
-                    log.info("Paiement MTN push initié via Monetbil: ref={} paymentId={}", reference, paymentId);
+                    log.info("Paiement MTN push initié: ref={} net={} total={} frais={}", reference, montantNet, montantFacture, fraisGateway);
                     return PaiementResponse.builder()
                             .id(paiement.getId())
                             .referenceTransaction(reference)
-                            .montant(request.getMontant())
+                            .montant(montantNet)
+                            .fraisGateway(fraisGateway)
+                            .montantTotal(montantFacture)
                             .devise("XAF")
                             .operateur(PaiementMode.MTN_MOBILE_MONEY)
                             .statut(PaiementStatus.EN_ATTENTE)
@@ -214,14 +229,16 @@ public class PaiementServiceImpl implements PaiementService {
             }
 
             // Fallback widget URL si placePayment échoue
-            String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+            String widgetUrl = buildWidgetGetUrl(montantFacture, phone, reference,
                     "tontine_" + tontine.getId(), "membre_" + membre.getId());
             paiement.setGatewayPaymentUrl(widgetUrl);
             paiementRepository.save(paiement);
             return PaiementResponse.builder()
                     .id(paiement.getId())
                     .referenceTransaction(reference)
-                    .montant(request.getMontant())
+                    .montant(montantNet)
+                    .fraisGateway(fraisGateway)
+                    .montantTotal(montantFacture)
                     .devise("XAF")
                     .operateur(PaiementMode.MTN_MOBILE_MONEY)
                     .statut(PaiementStatus.EN_ATTENTE)
@@ -234,7 +251,7 @@ public class PaiementServiceImpl implements PaiementService {
             // ── Orange Money : push automatique via api.monetbil.com/placePayment ──
             MultiValueMap<String, String> orangeParams = new LinkedMultiValueMap<>();
             orangeParams.add("service",     monetbilServiceKey);
-            orangeParams.add("amount",      String.valueOf(request.getMontant().longValue()));
+            orangeParams.add("amount",      String.valueOf(montantFacture.longValue()));
             orangeParams.add("phonenumber", phone);
             orangeParams.add("item_ref",    reference);
             orangeParams.add("notify_url",  monetbilNotifyUrl);
@@ -247,11 +264,13 @@ public class PaiementServiceImpl implements PaiementService {
                 if ("REQUEST_ACCEPTED".equals(orangeStatus)) {
                     paiement.setGatewayTransactionId(paymentId);
                     paiementRepository.save(paiement);
-                    log.info("Paiement Orange push initié via Monetbil: ref={} paymentId={}", reference, paymentId);
+                    log.info("Paiement Orange push initié: ref={} net={} total={} frais={}", reference, montantNet, montantFacture, fraisGateway);
                     return PaiementResponse.builder()
                             .id(paiement.getId())
                             .referenceTransaction(reference)
-                            .montant(request.getMontant())
+                            .montant(montantNet)
+                            .fraisGateway(fraisGateway)
+                            .montantTotal(montantFacture)
                             .devise("XAF")
                             .operateur(PaiementMode.ORANGE_MONEY)
                             .statut(PaiementStatus.EN_ATTENTE)
@@ -268,7 +287,7 @@ public class PaiementServiceImpl implements PaiementService {
             }
 
             // Fallback widget URL si placePayment échoue
-            String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+            String widgetUrl = buildWidgetGetUrl(montantFacture, phone, reference,
                     "tontine_" + tontine.getId(), "membre_" + membre.getId());
             paiement.setGatewayPaymentUrl(widgetUrl);
             paiementRepository.save(paiement);
@@ -276,7 +295,9 @@ public class PaiementServiceImpl implements PaiementService {
             return PaiementResponse.builder()
                     .id(paiement.getId())
                     .referenceTransaction(reference)
-                    .montant(request.getMontant())
+                    .montant(montantNet)
+                    .fraisGateway(fraisGateway)
+                    .montantTotal(montantFacture)
                     .devise("XAF")
                     .operateur(PaiementMode.ORANGE_MONEY)
                     .statut(PaiementStatus.EN_ATTENTE)
@@ -369,10 +390,15 @@ public class PaiementServiceImpl implements PaiementService {
 
         String reference = "TONTINE-ESP-" + UUID.randomUUID().toString().substring(0, 10).toUpperCase();
 
+        BigDecimal montantNet     = tontine.getMontantContribution().add(montantAmende);
+        BigDecimal montantFacture = calculerMontantFacture(montantNet);
+        BigDecimal fraisGateway   = montantFacture.subtract(montantNet);
+
         Paiement paiement = Paiement.builder()
                 .membre(membre)
-                .montant(request.getMontant())
+                .montant(montantNet)
                 .montantAmende(montantAmende)
+                .fraisGateway(fraisGateway)
                 .devise("XAF")
                 .operateur(request.getOperateurReel())
                 .modePaiementReel(request.getOperateurReel())
@@ -390,7 +416,7 @@ public class PaiementServiceImpl implements PaiementService {
         // ── Push automatique via api.monetbil.com/placePayment (MTN + Orange) ──
         MultiValueMap<String, String> pushParams = new LinkedMultiValueMap<>();
         pushParams.add("service",     monetbilServiceKey);
-        pushParams.add("amount",      String.valueOf(request.getMontant().longValue()));
+        pushParams.add("amount",      String.valueOf(montantFacture.longValue()));
         pushParams.add("phonenumber", espPhone);
         pushParams.add("item_ref",    reference);
         pushParams.add("notify_url",  monetbilNotifyUrl);
@@ -404,11 +430,13 @@ public class PaiementServiceImpl implements PaiementService {
                 paiement.setGatewayTransactionId(paymentId);
                 paiementRepository.save(paiement);
                 String operateur = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY ? "MTN MoMo" : "Orange Money";
-                log.info("Paiement espèces {} push initié: ref={} paymentId={}", operateur, reference, paymentId);
+                log.info("Paiement espèces {} push initié: ref={} net={} total={}", operateur, reference, montantNet, montantFacture);
                 return PaiementResponse.builder()
                         .id(paiement.getId())
                         .referenceTransaction(reference)
-                        .montant(request.getMontant())
+                        .montant(montantNet)
+                        .fraisGateway(fraisGateway)
+                        .montantTotal(montantFacture)
                         .devise("XAF")
                         .operateur(PaiementMode.ESPECES)
                         .statut(PaiementStatus.EN_ATTENTE)
@@ -425,7 +453,7 @@ public class PaiementServiceImpl implements PaiementService {
         }
 
         // Fallback widget URL
-        String espWidgetUrl = buildWidgetGetUrl(request.getMontant(), espPhone, reference,
+        String espWidgetUrl = buildWidgetGetUrl(montantFacture, espPhone, reference,
                 "tontine_" + tontine.getId(), "membre_" + membre.getId());
         paiement.setGatewayPaymentUrl(espWidgetUrl);
         paiementRepository.save(paiement);
@@ -439,7 +467,9 @@ public class PaiementServiceImpl implements PaiementService {
         return PaiementResponse.builder()
                 .id(paiement.getId())
                 .referenceTransaction(reference)
-                .montant(request.getMontant())
+                .montant(montantNet)
+                .fraisGateway(fraisGateway)
+                .montantTotal(montantFacture)
                 .devise("XAF")
                 .operateur(request.getOperateurReel())
                 .statut(PaiementStatus.EN_ATTENTE)
@@ -849,6 +879,8 @@ public class PaiementServiceImpl implements PaiementService {
                 .id(p.getId())
                 .referenceTransaction(p.getReferenceTransaction())
                 .montant(p.getMontant())
+                .fraisGateway(p.getFraisGateway())
+                .montantTotal(p.getMontant().add(p.getFraisGateway() != null ? p.getFraisGateway() : BigDecimal.ZERO))
                 .devise(p.getDevise())
                 .operateur(p.getOperateur())
                 .statut(p.getStatut())
@@ -858,5 +890,27 @@ public class PaiementServiceImpl implements PaiementService {
                 .payePourCompte(p.getPayePourCompte())
                 .createdAt(p.getCreatedAt())
                 .build();
+    }
+
+    // ── Calcul des frais gateway Monetbil ─────────────────────────────────────
+
+    /**
+     * Calcule le montant total à débiter sur le téléphone du payeur pour que
+     * l'admin reçoive exactement {@code montantNet} après prélèvement des frais.
+     *
+     * Formule : montantFacture = (montantNet + fraisFixe) / (1 - tauxFrais)
+     * Arrondi à la dizaine supérieure de 5 FCFA (standard Mobile Money Cameroun).
+     */
+    public BigDecimal calculerMontantFacture(BigDecimal montantNet) {
+        BigDecimal diviseur = BigDecimal.ONE.subtract(BigDecimal.valueOf(tauxFrais));
+        BigDecimal raw = montantNet.add(BigDecimal.valueOf(fraisFixe))
+                .divide(diviseur, 0, RoundingMode.CEILING);
+        long val = raw.longValue();
+        long arrondi = (val % 5 == 0) ? val : val + (5 - val % 5);
+        return BigDecimal.valueOf(arrondi);
+    }
+
+    public BigDecimal calculerFrais(BigDecimal montantNet) {
+        return calculerMontantFacture(montantNet).subtract(montantNet);
     }
 }

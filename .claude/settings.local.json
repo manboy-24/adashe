@@ -42,7 +42,10 @@
       "Bash(awk -F: '{if \\($2 > 2113 && $2 < 2700\\) print}')",
       "Bash(awk -F: '{if \\($2 > 2113 && $2 < 3000\\) print}')",
       "Bash(awk -F: '{if \\($2 >= 2113 && $2 <= 2900\\) print}')",
-      "Bash(railway run *)"
+      "Bash(railway run *)",
+      "WebSearch",
+      "WebFetch(domain:momocalc.com)",
+      "WebFetch(domain:monetbil.company)"
     ]
   }
 }

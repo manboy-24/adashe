@@ -66,6 +66,10 @@ monetbil:
   notify-url:     ${MONETBIL_NOTIFY_URL:}
   don-notify-url: ${MONETBIL_DON_NOTIFY_URL:${MONETBIL_NOTIFY_URL:}}
   return-url:     ${MONETBIL_RETURN_URL:}
+  # Frais gateway : commission Monetbil (~3.8%) + TTA 0.2% = 4.2%
+  # Formule : montantFacture = (montantNet + frais-fixe) / (1 - taux-frais)
+  taux-frais: 0.042
+  frais-fixe: 4
 
 # ── Compte développeur (destinataire des amendes) ──────────────────────────────
 developpeur:

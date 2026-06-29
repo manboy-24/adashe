@@ -63,6 +63,11 @@ public class Paiement {
     @Builder.Default
     private BigDecimal montantAmende = BigDecimal.ZERO;
 
+    /** Frais gateway Monetbil prélevés sur ce paiement (commission + TTA). */
+    @Column(nullable = false)
+    @Builder.Default
+    private BigDecimal fraisGateway = BigDecimal.ZERO;
+
     private LocalDateTime datePaiement;
 
     // ── Paiement espèces par l'admin ─────────────────────────────────────────

@@ -49,7 +49,6 @@ public class PaiementServiceImpl implements PaiementService {
     private final MonetbilGateway monetbilGateway;
     private final ObjectMapper objectMapper;
     private final VirementAmendeService virementAmendeService;
-    private final MtnMobileMoneyService mtnService;
 
     @Value("${monetbil.service-key}")
     private String monetbilServiceKey;
@@ -64,6 +63,8 @@ public class PaiementServiceImpl implements PaiementService {
 
     @Value("${monetbil.check-payment-url:https://api.monetbil.com/payment/v1/checkPayment}")
     private String monetbilCheckPaymentUrl;
+
+    private static final String MONETBIL_PLACE_PAYMENT_URL = "https://api.monetbil.com/payment/v1/placePayment";
 
     @Value("${monetbil.notify-url}")
     private String monetbilNotifyUrl;
@@ -172,46 +173,59 @@ public class PaiementServiceImpl implements PaiementService {
         String phone = buildPhone(request.getNumeroPaiement());
 
         if (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY) {
-            // ── MTN : push direct sur le téléphone via MADAPI ────────────────
-            String desc = "Cotisation " + tontine.getNom() + " cycle " + targetCycle;
-            Map<String, Object> mtnResult = mtnService.requestToPay(phone, request.getMontant(), reference, desc);
+            // ── MTN : push automatique via api.monetbil.com/placePayment ─────
+            MultiValueMap<String, String> mtnParams = new LinkedMultiValueMap<>();
+            mtnParams.add("service",     monetbilServiceKey);
+            mtnParams.add("amount",      String.valueOf(request.getMontant().longValue()));
+            mtnParams.add("phonenumber", phone);
+            mtnParams.add("item_ref",    reference);
+            mtnParams.add("notify_url",  monetbilNotifyUrl);
 
-            if (Boolean.TRUE.equals(mtnResult.get("success"))) {
-                paiement.setGatewayTransactionId((String) mtnResult.getOrDefault("referenceOperateur", reference));
-                paiementRepository.save(paiement);
-                log.info("Paiement MTN push initié: ref={}", reference);
-                return PaiementResponse.builder()
-                        .id(paiement.getId())
-                        .referenceTransaction(reference)
-                        .montant(request.getMontant())
-                        .devise("XAF")
-                        .operateur(PaiementMode.MTN_MOBILE_MONEY)
-                        .statut(PaiementStatus.EN_ATTENTE)
-                        .numeroPaieur(request.getNumeroPaiement())
-                        .messageOperateur("Demande envoyée.")
-                        .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
-                        .createdAt(paiement.getCreatedAt())
-                        .build();
-            } else {
-                // Fallback widget URL si MTN push échoue
-                log.warn("MTN push échoué ({}), fallback widget URL", mtnResult.get("message"));
-                String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
-                        "tontine_" + tontine.getId(), "membre_" + membre.getId());
-                paiement.setGatewayPaymentUrl(widgetUrl);
-                paiementRepository.save(paiement);
-                return PaiementResponse.builder()
-                        .id(paiement.getId())
-                        .referenceTransaction(reference)
-                        .montant(request.getMontant())
-                        .devise("XAF")
-                        .operateur(PaiementMode.MTN_MOBILE_MONEY)
-                        .statut(PaiementStatus.EN_ATTENTE)
-                        .numeroPaieur(request.getNumeroPaiement())
-                        .urlPaiement(widgetUrl)
-                        .instructions("Confirmez le paiement sur votre téléphone MTN MoMo.")
-                        .createdAt(paiement.getCreatedAt())
-                        .build();
+            try {
+                JsonNode mtnResp = monetbilGateway.callApi(MONETBIL_PLACE_PAYMENT_URL, mtnParams);
+                String mtnStatus = mtnResp.path("status").asText("");
+                String paymentId = mtnResp.path("paymentId").asText(reference);
+
+                if ("REQUEST_ACCEPTED".equals(mtnStatus)) {
+                    paiement.setGatewayTransactionId(paymentId);
+                    paiementRepository.save(paiement);
+                    log.info("Paiement MTN push initié via Monetbil: ref={} paymentId={}", reference, paymentId);
+                    return PaiementResponse.builder()
+                            .id(paiement.getId())
+                            .referenceTransaction(reference)
+                            .montant(request.getMontant())
+                            .devise("XAF")
+                            .operateur(PaiementMode.MTN_MOBILE_MONEY)
+                            .statut(PaiementStatus.EN_ATTENTE)
+                            .numeroPaieur(request.getNumeroPaiement())
+                            .messageOperateur("Demande envoyée.")
+                            .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
+                            .createdAt(paiement.getCreatedAt())
+                            .build();
+                } else {
+                    log.warn("Monetbil placePayment MTN statut inattendu: {}", mtnStatus);
+                }
+            } catch (Exception e) {
+                log.error("Erreur Monetbil placePayment MTN: {}", e.getMessage());
             }
+
+            // Fallback widget URL si placePayment échoue
+            String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+                    "tontine_" + tontine.getId(), "membre_" + membre.getId());
+            paiement.setGatewayPaymentUrl(widgetUrl);
+            paiementRepository.save(paiement);
+            return PaiementResponse.builder()
+                    .id(paiement.getId())
+                    .referenceTransaction(reference)
+                    .montant(request.getMontant())
+                    .devise("XAF")
+                    .operateur(PaiementMode.MTN_MOBILE_MONEY)
+                    .statut(PaiementStatus.EN_ATTENTE)
+                    .numeroPaieur(request.getNumeroPaiement())
+                    .urlPaiement(widgetUrl)
+                    .instructions("Confirmez le paiement sur votre téléphone MTN MoMo.")
+                    .createdAt(paiement.getCreatedAt())
+                    .build();
         } else {
             // ── Orange Money : URL widget Monetbil (GET) ─────────────────────
             String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
@@ -327,11 +341,49 @@ public class PaiementServiceImpl implements PaiementService {
                 .build();
         paiement = paiementRepository.save(paiement);
 
-        // Construire l'URL widget Monetbil (GET)
         String espPhone = buildPhone(request.getNumeroPaiement());
+
+        if (request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY) {
+            // ── MTN : push automatique via api.monetbil.com/placePayment ─────
+            MultiValueMap<String, String> mtnParams = new LinkedMultiValueMap<>();
+            mtnParams.add("service",     monetbilServiceKey);
+            mtnParams.add("amount",      String.valueOf(request.getMontant().longValue()));
+            mtnParams.add("phonenumber", espPhone);
+            mtnParams.add("item_ref",    reference);
+            mtnParams.add("notify_url",  monetbilNotifyUrl);
+
+            try {
+                JsonNode mtnResp = monetbilGateway.callApi(MONETBIL_PLACE_PAYMENT_URL, mtnParams);
+                String mtnStatus = mtnResp.path("status").asText("");
+                String paymentId = mtnResp.path("paymentId").asText(reference);
+
+                if ("REQUEST_ACCEPTED".equals(mtnStatus)) {
+                    paiement.setGatewayTransactionId(paymentId);
+                    paiementRepository.save(paiement);
+                    log.info("Paiement espèces MTN push initié: ref={} paymentId={}", reference, paymentId);
+                    return PaiementResponse.builder()
+                            .id(paiement.getId())
+                            .referenceTransaction(reference)
+                            .montant(request.getMontant())
+                            .devise("XAF")
+                            .operateur(PaiementMode.ESPECES)
+                            .statut(PaiementStatus.EN_ATTENTE)
+                            .numeroPaieur(request.getNumeroPaiement())
+                            .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
+                            .payePourCompte(true)
+                            .createdAt(paiement.getCreatedAt())
+                            .build();
+                } else {
+                    log.warn("Monetbil placePayment espèces MTN statut inattendu: {}", mtnStatus);
+                }
+            } catch (Exception e) {
+                log.error("Erreur Monetbil placePayment espèces MTN: {}", e.getMessage());
+            }
+        }
+
+        // Orange Money ou fallback MTN : widget URL
         String espWidgetUrl = buildWidgetGetUrl(request.getMontant(), espPhone, reference,
                 "tontine_" + tontine.getId(), "membre_" + membre.getId());
-
         paiement.setGatewayPaymentUrl(espWidgetUrl);
         paiementRepository.save(paiement);
 
@@ -339,7 +391,7 @@ public class PaiementServiceImpl implements PaiementService {
                 ? "Confirmez le paiement sur votre téléphone MTN MoMo."
                 : "Confirmez le paiement via Orange Money.";
 
-        log.info("Paiement espèces admin initié (widget URL): ref={}", reference);
+        log.info("Paiement espèces initié (widget URL): ref={}", reference);
 
         return PaiementResponse.builder()
                 .id(paiement.getId())

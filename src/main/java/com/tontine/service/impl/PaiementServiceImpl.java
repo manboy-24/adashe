@@ -129,7 +129,7 @@ public class PaiementServiceImpl implements PaiementService {
 
         // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
         paiementRepository.annulerPaiementsExpiresParMembre(
-                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusHours(2));
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(10));
 
         // Rejeter si un paiement EN_ATTENTE récent existe encore (anti-concurrent)
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
@@ -301,7 +301,7 @@ public class PaiementServiceImpl implements PaiementService {
 
         // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
         paiementRepository.annulerPaiementsExpiresParMembre(
-                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusHours(2));
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(10));
 
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");

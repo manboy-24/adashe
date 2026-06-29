@@ -56,9 +56,16 @@ public class PaiementController {
     // ── Webhooks (sans JWT — appelés par Monetbil) ────────────────────────────
 
     @PostMapping("/webhook/monetbil")
-    @Operation(summary = "Webhook Monetbil (MTN MoMo + Orange Money Cameroun)")
+    @Operation(summary = "Webhook Monetbil (Orange Money Cameroun)")
     public ResponseEntity<ApiResponse<String>> webhookMonetbil(
             @RequestParam Map<String, String> params) {
         return ResponseEntity.ok(paiementService.traiterCallbackMonetbil(params));
+    }
+
+    @PostMapping("/webhook/mtn")
+    @Operation(summary = "Webhook MTN MADAPI (callback paiement direct)")
+    public ResponseEntity<ApiResponse<String>> webhookMtn(
+            @RequestBody Map<String, Object> payload) {
+        return ResponseEntity.ok(paiementService.traiterCallbackMtn(payload));
     }
 }

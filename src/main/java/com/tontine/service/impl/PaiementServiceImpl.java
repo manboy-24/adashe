@@ -49,6 +49,7 @@ public class PaiementServiceImpl implements PaiementService {
     private final MonetbilGateway monetbilGateway;
     private final ObjectMapper objectMapper;
     private final VirementAmendeService virementAmendeService;
+    private final MtnMobileMoneyService mtnService;
 
     @Value("${monetbil.service-key}")
     private String monetbilServiceKey;
@@ -168,34 +169,56 @@ public class PaiementServiceImpl implements PaiementService {
                 .build();
         paiement = paiementRepository.save(paiement);
 
-        // Construire l'URL widget Monetbil (GET) — le backend ne contacte pas Monetbil,
-        // l'app ouvre cette URL dans le navigateur et Monetbil appelle notre webhook.
         String phone = buildPhone(request.getNumeroPaiement());
-        String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
-                "tontine_" + tontine.getId(), "membre_" + membre.getId());
 
-        paiement.setGatewayPaymentUrl(widgetUrl);
-        paiementRepository.save(paiement);
+        if (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY) {
+            // ── MTN : push direct sur le téléphone via MADAPI ────────────────
+            String desc = "Cotisation " + tontine.getNom() + " cycle " + targetCycle;
+            Map<String, Object> mtnResult = mtnService.requestToPay(phone, request.getMontant(), reference, desc);
 
-        String instructions = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                ? "Confirmez le paiement sur votre téléphone MTN MoMo."
-                : "Confirmez le paiement via Orange Money.";
-
-        log.info("Paiement Monetbil initié (widget URL): ref={} opérateur={}", reference, request.getOperateur());
-
-        return PaiementResponse.builder()
-                .id(paiement.getId())
-                .referenceTransaction(reference)
-                .montant(request.getMontant())
-                .devise("XAF")
-                .operateur(request.getOperateur())
-                .statut(PaiementStatus.EN_ATTENTE)
-                .numeroPaieur(request.getNumeroPaiement())
-                .urlPaiement(widgetUrl)
-                .messageOperateur("Ouvrez l'URL pour payer via Monetbil.")
-                .instructions(instructions)
-                .createdAt(paiement.getCreatedAt())
-                .build();
+            if (Boolean.TRUE.equals(mtnResult.get("success"))) {
+                paiement.setGatewayTransactionId((String) mtnResult.getOrDefault("referenceOperateur", reference));
+                paiementRepository.save(paiement);
+                log.info("Paiement MTN push initié: ref={}", reference);
+                return PaiementResponse.builder()
+                        .id(paiement.getId())
+                        .referenceTransaction(reference)
+                        .montant(request.getMontant())
+                        .devise("XAF")
+                        .operateur(PaiementMode.MTN_MOBILE_MONEY)
+                        .statut(PaiementStatus.EN_ATTENTE)
+                        .numeroPaieur(request.getNumeroPaiement())
+                        .messageOperateur("Demande envoyée.")
+                        .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
+                        .createdAt(paiement.getCreatedAt())
+                        .build();
+            } else {
+                paiement.setStatut(PaiementStatus.ANNULE);
+                paiement.setMessageOperateur((String) mtnResult.get("message"));
+                paiementRepository.save(paiement);
+                throw new BadRequestException((String) mtnResult.get("message"));
+            }
+        } else {
+            // ── Orange Money : URL widget Monetbil (GET) ─────────────────────
+            String widgetUrl = buildWidgetGetUrl(request.getMontant(), phone, reference,
+                    "tontine_" + tontine.getId(), "membre_" + membre.getId());
+            paiement.setGatewayPaymentUrl(widgetUrl);
+            paiementRepository.save(paiement);
+            log.info("Paiement Orange widget URL initié: ref={}", reference);
+            return PaiementResponse.builder()
+                    .id(paiement.getId())
+                    .referenceTransaction(reference)
+                    .montant(request.getMontant())
+                    .devise("XAF")
+                    .operateur(PaiementMode.ORANGE_MONEY)
+                    .statut(PaiementStatus.EN_ATTENTE)
+                    .numeroPaieur(request.getNumeroPaiement())
+                    .urlPaiement(widgetUrl)
+                    .messageOperateur("Ouvrez l'URL pour payer via Orange Money.")
+                    .instructions("Confirmez le paiement via Orange Money.")
+                    .createdAt(paiement.getCreatedAt())
+                    .build();
+        }
     }
 
     // ── Paiement espèces : admin paie en MoMo pour un membre ─────────────────
@@ -633,6 +656,82 @@ public class PaiementServiceImpl implements PaiementService {
             paiement.setCotisation(cotisation);
             paiementRepository.save(paiement);
         }
+    }
+
+    // ── Webhook MTN MADAPI ────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public ApiResponse<String> traiterCallbackMtn(Map<String, Object> payload) {
+        log.info("Callback MTN reçu: {}", payload);
+
+        // MTN envoie : transactionId, externalTransactionId, status, amount…
+        String reference     = String.valueOf(payload.getOrDefault("externalTransactionId", ""));
+        String transactionId = String.valueOf(payload.getOrDefault("transactionId", ""));
+        String statut        = String.valueOf(payload.getOrDefault("status", ""));
+
+        if (reference.isBlank() && transactionId.isBlank()) {
+            log.warn("[MTN] Callback sans référence");
+            return ApiResponse.error("Référence manquante");
+        }
+
+        Paiement paiement = paiementRepository.findByReferenceTransactionForUpdate(reference)
+                .orElseGet(() -> paiementRepository.findByGatewayTransactionIdForUpdate(transactionId).orElse(null));
+
+        if (paiement == null) {
+            log.warn("[MTN] Paiement non trouvé: ref={}", reference);
+            return ApiResponse.error("Paiement non trouvé");
+        }
+
+        if (paiement.getStatut() == PaiementStatus.PAYE || paiement.getStatut() == PaiementStatus.ANNULE) {
+            return ApiResponse.success(null, "Déjà traité");
+        }
+
+        if ("SUCCESSFUL".equalsIgnoreCase(statut) || "COMPLETED".equalsIgnoreCase(statut) || "SUCCESS".equalsIgnoreCase(statut)) {
+            paiement.setStatut(PaiementStatus.PAYE);
+            paiement.setDatePaiement(LocalDateTime.now());
+            paiement.setGatewayTransactionId(transactionId.isBlank() ? reference : transactionId);
+            paiement.setMessageOperateur("Confirmé via MTN MoMo");
+            paiementRepository.save(paiement);
+
+            enregistrerCotisationApresPaiement(paiement);
+
+            if (paiement.getMontantAmende() != null && paiement.getMontantAmende().compareTo(BigDecimal.ZERO) > 0) {
+                VirementAmende virement = virementAmendeService.creerVirementEnAttente(paiement, paiement.getMontantAmende());
+                Long virementId = virement.getId();
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override public void afterCommit() { virementAmendeService.effectuerVirementAsyncParId(virementId); }
+                });
+            }
+
+            notificationService.creerNotification(
+                    paiement.getMembre().getUtilisateur(), paiement.getMembre().getTontine(),
+                    "✅ Paiement confirmé",
+                    "Votre cotisation de " + paiement.getMontant() + " XAF a été confirmée via MTN MoMo.",
+                    com.tontine.enums.NotificationType.PAIEMENT_RECU);
+
+            Utilisateur createur = paiement.getMembre().getTontine().getCreateur();
+            if (createur != null && !createur.getId().equals(paiement.getMembre().getUtilisateur().getId())) {
+                notificationService.creerNotification(
+                        createur, paiement.getMembre().getTontine(),
+                        "💰 Cotisation reçue",
+                        paiement.getMembre().getUtilisateur().getPrenom() + " "
+                                + paiement.getMembre().getUtilisateur().getNom()
+                                + " a payé " + paiement.getMontant() + " XAF via MTN MoMo.",
+                        com.tontine.enums.NotificationType.PAIEMENT_RECU);
+            }
+
+            log.info("[MTN] Cotisation enregistrée: ref={}", reference);
+            return ApiResponse.success(null, "Paiement confirmé");
+
+        } else if ("FAILED".equalsIgnoreCase(statut) || "FAILURE".equalsIgnoreCase(statut)) {
+            paiement.setStatut(PaiementStatus.ANNULE);
+            paiement.setMessageOperateur("Échec MTN: " + payload.getOrDefault("statusDescription", "inconnu"));
+            paiementRepository.save(paiement);
+            return ApiResponse.error("Paiement échoué");
+        }
+
+        return ApiResponse.success(null, "En attente");
     }
 
     private PaiementResponse toResponse(Paiement p) {

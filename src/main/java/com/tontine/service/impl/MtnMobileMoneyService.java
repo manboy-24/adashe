@@ -1,20 +1,24 @@
 package com.tontine.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tontine.config.MobileMoneyConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * Intégration MTN Mobile Money (MoMo) API - Cameroun
- * Documentation: https://momodeveloper.mtn.com/
- * Collection: Collections API (pour recevoir des paiements)
+ * Intégration MTN MADAPI Payments V1 — Cameroun production
+ * Base URL : https://api.mtn.com/v1
+ * Auth : OAuth2 client_credentials (Consumer Key / Consumer Secret)
+ * Endpoint : POST /payments  (debit request vers le wallet du payeur)
  */
 @Service
 @RequiredArgsConstructor
@@ -25,39 +29,42 @@ public class MtnMobileMoneyService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    /**
-     * Étape 1: Demander un token d'accès OAuth2
-     */
+    /** Obtenir un Bearer token via OAuth2 client_credentials */
     public String obtenirAccessToken() {
         MobileMoneyConfig.Mtn mtn = config.getMtn();
+
         String credentials = mtn.getApiUser() + ":" + mtn.getApiKey();
         String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Basic " + encoded);
-        headers.set("Ocp-Apim-Subscription-Key", mtn.getSubscriptionKey());
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-        HttpEntity<String> entity = new HttpEntity<>("{}", headers);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("grant_type", "client_credentials");
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(
-                mtn.getBaseUrl() + "/collection/token/",
-                entity,
+                mtn.getBaseUrl() + "/oauth/access_token",
+                new HttpEntity<>(body, headers),
                 Map.class
             );
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return (String) response.getBody().get("access_token");
+                String token = (String) response.getBody().get("access_token");
+                log.info("[MTN] Token obtenu avec succès");
+                return token;
             }
+            log.error("[MTN] Token endpoint HTTP {}", response.getStatusCode());
         } catch (Exception e) {
-            log.error("Erreur MTN token: {}", e.getMessage());
+            log.error("[MTN] Erreur token: {}", e.getMessage());
         }
         return null;
     }
 
     /**
-     * Étape 2: Initier une demande de paiement (Request to Pay)
-     * L'utilisateur reçoit une notification USSD sur son téléphone
+     * Initier un paiement MoMo via MADAPI POST /payments.
+     * MTN envoie une notification USSD/push directement sur le téléphone du payeur.
+     * Retourne la map : success, referenceOperateur, message.
      */
     public Map<String, Object> requestToPay(
             String telephone,
@@ -72,58 +79,70 @@ public class MtnMobileMoneyService {
             return Map.of("success", false, "message", "Impossible d'obtenir le token MTN MoMo");
         }
 
-        // Normaliser le numéro camerounais (retirer +237 ou 237)
-        String telNormalise = normaliserTelCameroun(telephone);
+        String msisdn = normaliserTelCameroun(telephone);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
-        headers.set("Ocp-Apim-Subscription-Key", mtn.getSubscriptionKey());
-        headers.set("X-Reference-Id", referenceInterne);
-        headers.set("X-Target-Environment", mtn.getEnvironment());
-        if (mtn.getCallbackUrl() != null) {
-            headers.set("X-Callback-Url", mtn.getCallbackUrl());
-        }
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("countryCode",     "CM");
+        headers.set("transactionId",   referenceInterne);
 
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("amount", montant.toPlainString());
-        body.put("currency", mtn.getCurrency());
-        body.put("externalId", referenceInterne);
-        body.put("payer", Map.of(
-            "partyIdType", "MSISDN",
-            "partyId", telNormalise
-        ));
-        body.put("payerMessage", description);
-        body.put("payeeNote", "Cotisation Tontine+ - " + referenceInterne);
+        Map<String, Object> payer = new LinkedHashMap<>();
+        payer.put("payerId",     msisdn);
+        payer.put("payerIdType", "MSISDN");
+        payer.put("payerNote",   description);
+
+        Map<String, Object> amount = new LinkedHashMap<>();
+        amount.put("amount", montant.toPlainString());
+        amount.put("units",  mtn.getCurrency());   // XAF
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("externalTransactionId", referenceInterne);
+        requestBody.put("description",           description);
+        requestBody.put("amount",                amount);
+        requestBody.put("payer",                 payer);
+        requestBody.put("transactionType",       "DEBIT_REQUEST");
+        requestBody.put("callbackURL",           mtn.getCallbackUrl());
+        requestBody.put("countryCode",           "CM");
 
         try {
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(
-                mtn.getBaseUrl() + "/collection/v1_0/requesttopay",
-                entity,
+                mtn.getBaseUrl() + "/payments",
+                new HttpEntity<>(requestBody, headers),
                 String.class
             );
 
-            if (response.getStatusCode() == HttpStatus.ACCEPTED) {
-                log.info("MTN MoMo request-to-pay initié: {}", referenceInterne);
+            log.info("[MTN] POST /payments → HTTP {}", response.getStatusCode());
+
+            if (response.getStatusCode() == HttpStatus.ACCEPTED
+                    || response.getStatusCode().is2xxSuccessful()) {
+
+                String transactionId = referenceInterne;
+                try {
+                    JsonNode node = objectMapper.readTree(response.getBody());
+                    transactionId = node.path("transactionId").asText(referenceInterne);
+                } catch (Exception ignored) {}
+
+                log.info("[MTN] Paiement push initié: ref={} msisdn={}", referenceInterne, msisdn);
                 return Map.of(
-                    "success", true,
-                    "referenceOperateur", referenceInterne,
-                    "message", "Demande de paiement envoyée. Vérifiez votre téléphone MTN."
+                    "success",            true,
+                    "referenceOperateur", transactionId,
+                    "message",            "Demande envoyée. Vérifiez votre téléphone MTN MoMo."
                 );
-            } else {
-                return Map.of("success", false, "message", "Échec de la demande MTN MoMo: " + response.getStatusCode());
             }
+
+            String errMsg = response.getBody() != null ? response.getBody() : "Erreur MTN";
+            log.warn("[MTN] Échec paiement: HTTP {} — {}", response.getStatusCode(), errMsg);
+            return Map.of("success", false, "message", "Échec MTN MoMo: " + response.getStatusCode());
+
         } catch (Exception e) {
-            log.error("Erreur MTN requestToPay: {}", e.getMessage());
+            log.error("[MTN] Erreur requestToPay: {}", e.getMessage());
             return Map.of("success", false, "message", "Erreur réseau MTN: " + e.getMessage());
         }
     }
 
-    /**
-     * Étape 3: Vérifier le statut d'un paiement
-     */
-    public Map<String, Object> verifierStatut(String referenceInterne) {
+    /** Vérifier le statut d'un paiement via GET /payments/{transactionId} */
+    public Map<String, Object> verifierStatut(String transactionId) {
         MobileMoneyConfig.Mtn mtn = config.getMtn();
         String accessToken = obtenirAccessToken();
 
@@ -133,12 +152,11 @@ public class MtnMobileMoneyService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
-        headers.set("Ocp-Apim-Subscription-Key", mtn.getSubscriptionKey());
-        headers.set("X-Target-Environment", mtn.getEnvironment());
+        headers.set("countryCode", "CM");
 
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
-                mtn.getBaseUrl() + "/collection/v1_0/requesttopay/" + referenceInterne,
+                mtn.getBaseUrl() + "/payments/" + transactionId,
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 Map.class
@@ -146,31 +164,30 @@ public class MtnMobileMoneyService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> body = response.getBody();
-                String statut = (String) body.getOrDefault("status", "PENDING");
-                // MTN retourne: PENDING | SUCCESSFUL | FAILED
+                String statut = String.valueOf(body.getOrDefault("status", "PENDING"));
                 return Map.of(
-                    "statut", convertirStatutMtn(statut),
-                    "transactionId", body.getOrDefault("financialTransactionId", ""),
-                    "message", body.getOrDefault("reason", "")
+                    "statut",        convertirStatut(statut),
+                    "transactionId", body.getOrDefault("transactionId", ""),
+                    "message",       body.getOrDefault("statusDescription", "")
                 );
             }
         } catch (Exception e) {
-            log.error("Erreur vérification statut MTN: {}", e.getMessage());
+            log.error("[MTN] Erreur vérification statut: {}", e.getMessage());
         }
         return Map.of("statut", "EN_ATTENTE", "message", "Vérification en cours...");
     }
 
-    private String convertirStatutMtn(String statut) {
+    private String convertirStatut(String statut) {
         return switch (statut.toUpperCase()) {
-            case "SUCCESSFUL" -> "SUCCES";
-            case "FAILED"     -> "ECHEC";
-            default           -> "EN_ATTENTE";
+            case "SUCCESSFUL", "SUCCESS", "COMPLETED" -> "SUCCES";
+            case "FAILED", "FAILURE"                  -> "ECHEC";
+            default                                   -> "EN_ATTENTE";
         };
     }
 
     private String normaliserTelCameroun(String telephone) {
         String t = telephone.replaceAll("[^0-9]", "");
         if (t.startsWith("237")) t = t.substring(3);
-        return "237" + t; // MTN attend le format 2376XXXXXXXX
+        return "237" + t;
     }
 }

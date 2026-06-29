@@ -171,10 +171,12 @@ public class PaiementServiceImpl implements PaiementService {
             log.info("Payload Monetbil envoyé: {}", payload);
             JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
 
-            int success = response.path("success").asInt(0);
+            // Widget v2.1 : "payment_url" dans le corps JSON — succès si le champ est présent
+            String paymentUrl = response.path("payment_url").asText("");
+            int success = paymentUrl.isBlank() ? response.path("success").asInt(0) : 1;
             if (success == 1) {
-                String widgetUrl   = response.path("widget_url").asText("");
-                String paymentRef  = response.path("payment_ref").asText("");
+                String widgetUrl   = paymentUrl.isBlank() ? response.path("widget_url").asText("") : paymentUrl;
+                String paymentRef  = response.path("payment_ref").asText(reference);
 
                 paiement.setGatewayTransactionId(paymentRef);
                 paiement.setGatewayPaymentUrl(widgetUrl);
@@ -319,11 +321,13 @@ public class PaiementServiceImpl implements PaiementService {
                     request.getMontant(), reference, membre, tontine);
 
             JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
-            int success = response.path("success").asInt(0);
+            String espPaymentUrl = response.path("payment_url").asText("");
+            int success = espPaymentUrl.isBlank() ? response.path("success").asInt(0) : 1;
 
             if (success == 1) {
-                paiement.setGatewayTransactionId(response.path("payment_ref").asText(""));
-                paiement.setGatewayPaymentUrl(response.path("widget_url").asText(""));
+                String espWidgetUrl = espPaymentUrl.isBlank() ? response.path("widget_url").asText("") : espPaymentUrl;
+                paiement.setGatewayTransactionId(response.path("payment_ref").asText(reference));
+                paiement.setGatewayPaymentUrl(espWidgetUrl);
                 paiementRepository.save(paiement);
 
                 String instructions = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY
@@ -614,12 +618,10 @@ public class PaiementServiceImpl implements PaiementService {
 
         params.add("service",     monetbilServiceKey);
         params.add("amount",      String.valueOf(montant.longValue()));
-        params.add("phonenumber", phone);   // champ attendu par placePayment API
-        params.add("phone",       phone);   // champ widget v2.1
-        params.add("msisdn",      phone);   // alias
-        params.add("operator",    operator);
+        params.add("phone",       phone);
         params.add("locale",      "fr");
         params.add("item_ref",    reference);
+        params.add("payment_ref", reference);
         params.add("user1",       "tontine_" + tontine.getId());
         params.add("user2",       "membre_"  + membre.getId());
         params.add("notify_url",  monetbilNotifyUrl);

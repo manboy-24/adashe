@@ -36,9 +36,18 @@ public class MonetbilGateway {
     public JsonNode callApi(String apiUrl, MultiValueMap<String, String> params) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.set("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+        headers.set("Accept", "application/json, text/plain, */*");
+        headers.set("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.8");
+        headers.set("Origin", "https://www.monetbil.com");
+        headers.set("Referer", "https://www.monetbil.com/");
         HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(params, headers);
         ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, entity, String.class);
-        return objectMapper.readTree(response.getBody());
+        String body = response.getBody();
+        if (body != null && body.startsWith("<")) {
+            throw new RuntimeException("Monetbil CAPTCHA — réponse HTML inattendue. IP serveur bloquée.");
+        }
+        return objectMapper.readTree(body);
     }
 
     // Appelé quand le circuit est ouvert ou que toutes les tentatives ont échoué

@@ -1403,4 +1403,43 @@ public class TontineServiceImpl implements TontineService {
         while (tontineRepository.findByCodeInvitation(code).isPresent());
         return code;
     }
+
+    // ── Ordre de passage (rotatif) ────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public void modifierOrdrePassage(Long tontineId, OrdrePassageRequest request, Long adminId) {
+        Tontine tontine = tontineRepository.findById(tontineId)
+                .orElseThrow(() -> new RuntimeException("Tontine introuvable"));
+
+        verifierCreateur(tontine, adminId);
+
+        if (tontine.getTypeTirage() != TirageType.ROTATIF) {
+            throw new RuntimeException("L'ordre de passage ne s'applique qu'aux tontines rotatives");
+        }
+
+        List<MembreTontine> membres = membreRepository.findByTontineId(tontineId);
+
+        // Étape 1 : mettre ordreTour à NULL pour lever la contrainte d'unicité
+        membres.forEach(m -> m.setOrdreTour(null));
+        membreRepository.saveAll(membres);
+        membreRepository.flush();
+
+        // Étape 2 : appliquer le nouvel ordre
+        Map<Long, MembreTontine> index = membres.stream()
+                .collect(java.util.stream.Collectors.toMap(MembreTontine::getId, m -> m));
+
+        for (OrdrePassageRequest.OrdreMembreDto dto : request.getMembres()) {
+            MembreTontine m = index.get(dto.getMembreId());
+            if (m != null) m.setOrdreTour(dto.getOrdreTour());
+        }
+        membreRepository.saveAll(membres);
+    }
+
+    private void verifierCreateur(Tontine tontine, Long userId) {
+        boolean estCreateur = tontine.getMembres().stream()
+                .anyMatch(m -> m.getUtilisateur().getId().equals(userId)
+                        && m.getRoleMembreTontine() == MembreTontineRole.CREATEUR);
+        if (!estCreateur) throw new RuntimeException("Action réservée au créateur");
+    }
 }

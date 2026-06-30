@@ -101,6 +101,15 @@ public class TontineController {
                 .body(tontineService.ajouterMembre(id, request, securityUtil.getCurrentUserId()));
     }
 
+    @PutMapping("/{tontineId}/membres/ordre")
+    @Operation(summary = "Modifier l'ordre de passage des membres (rotatif, créateur uniquement)")
+    public ResponseEntity<ApiResponse<String>> modifierOrdrePassage(
+            @PathVariable Long tontineId,
+            @Valid @RequestBody OrdrePassageRequest request) {
+        tontineService.modifierOrdrePassage(tontineId, request, securityUtil.getCurrentUserId());
+        return ResponseEntity.ok(ApiResponse.success("Ordre de passage mis à jour"));
+    }
+
     @PostMapping("/rejoindre/{code}")
     @Operation(summary = "Rejoindre une tontine avec le code d'invitation")
     public ResponseEntity<ApiResponse<String>> rejoindre(@PathVariable String code) {

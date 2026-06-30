@@ -40,4 +40,6 @@ public interface TontineService {
     StatistiquesResponse getStatistiques(Long tontineId, Long userId);
     byte[] exportCotisationsCsv(Long tontineId, Long userId);
     DashboardResponse getDashboard(Long userId);
+    /** Redéfinit l'ordre de passage des membres (rotatif). Admin only, avant ou pendant la tontine. */
+    void modifierOrdrePassage(Long tontineId, OrdrePassageRequest request, Long adminId);
 }

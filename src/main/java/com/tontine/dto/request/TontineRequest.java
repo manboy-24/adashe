@@ -10,7 +10,7 @@ import java.time.LocalDate;
 public class TontineRequest {
     @NotBlank private String nom;
     private String description;
-    @NotNull @DecimalMin("1000") private BigDecimal montantContribution;
+    @NotNull @DecimalMin("100") private BigDecimal montantContribution;
     @NotNull private FrequenceType frequence;
     @NotNull private TirageType typeTirage;
     @NotNull private LocalDate dateDebut;

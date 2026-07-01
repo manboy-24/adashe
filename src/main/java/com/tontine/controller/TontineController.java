@@ -107,7 +107,7 @@ public class TontineController {
             @PathVariable Long tontineId,
             @Valid @RequestBody OrdrePassageRequest request) {
         tontineService.modifierOrdrePassage(tontineId, request, securityUtil.getCurrentUserId());
-        return ResponseEntity.ok(ApiResponse.success("Ordre de passage mis à jour"));
+        return ResponseEntity.ok(ApiResponse.success("OK", "Ordre de passage mis à jour"));
     }
 
     @PostMapping("/rejoindre/{code}")

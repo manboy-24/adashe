@@ -41,8 +41,10 @@ public class ExpirationPaiementScheduler {
         if (expires.isEmpty()) return;
 
         for (Paiement p : expires) {
-            p.setStatut(PaiementStatus.ANNULE);
-            paiementRepository.save(p);
+            // UPDATE atomique : n'annule que si EN_ATTENTE en base à l'instant T
+            // Évite d'écraser un PAYE posé par un webhook concurrent
+            int updated = paiementRepository.annulerSiEnAttente(p.getId());
+            if (updated == 0) continue; // webhook est passé en premier, on ne notifie pas
 
             notificationService.creerNotification(
                     p.getMembre().getUtilisateur(),

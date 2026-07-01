@@ -21,10 +21,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
+
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -59,7 +59,7 @@ class PaiementServiceTest {
     void setUp() {
         ReflectionTestUtils.setField(paiementService, "monetbilServiceKey",    "test-key");
         ReflectionTestUtils.setField(paiementService, "monetbilServiceSecret", SERVICE_SECRET);
-        ReflectionTestUtils.setField(paiementService, "monetbilApiUrl",        "http://localhost/test");
+
         ReflectionTestUtils.setField(paiementService, "monetbilNotifyUrl",     "http://localhost/notify");
         ReflectionTestUtils.setField(paiementService, "monetbilReturnUrl",     "http://localhost/return");
         ReflectionTestUtils.setField(paiementService, "objectMapper",          objectMapper);
@@ -233,6 +233,26 @@ class PaiementServiceTest {
     }
 
     @Test
+    void callback_successfull_double_l_enregistre_cotisation() {
+        // Monetbil envoie parfois "SUCCESSFULL" (double L) — doit être traité comme SUCCESS
+        Paiement paiement = paiementEnAttente();
+
+        when(paiementRepository.findByReferenceTransactionForUpdate("REF-001"))
+                .thenReturn(Optional.of(paiement));
+        when(cotisationRepository.findByMembreIdAndTontineIdAndNumeroCycle(anyLong(), anyLong(), anyInt()))
+                .thenReturn(Optional.empty());
+        when(cotisationRepository.save(any())).thenAnswer(inv -> { Cotisation c = inv.getArgument(0); c.setId(200L); return c; });
+        when(paiementRepository.save(any())).thenReturn(paiement);
+
+        ApiResponse<String> result = paiementService.traiterCallbackMonetbil(
+                buildSignedPayload("REF-001", "PAY-123", "SUCCESSFULL"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(paiement.getStatut()).isEqualTo(PaiementStatus.PAYE);
+        verify(cotisationRepository).save(any(Cotisation.class));
+    }
+
+    @Test
     void callback_failed_marque_annule() {
         Paiement paiement = paiementEnAttente();
 
@@ -331,20 +351,17 @@ class PaiementServiceTest {
         return r;
     }
 
-    /**
-     * Construit un payload Monetbil avec la vraie signature HMAC-SHA512.
-     * Utilise le même algorithme que PaiementServiceImpl.verifierSignatureMonetbil().
-     */
+    // SHA-512(serviceSecret + valeurs triées par clé, sans "sign") — algorithme réel Monetbil
     private Map<String, String> buildSignedPayload(String ref, String paymentRef, String statut) {
         Map<String, String> payload = new HashMap<>();
         payload.put("item_ref",    ref);
         payload.put("payment_ref", paymentRef);
         payload.put("status",      statut);
-        payload.put("sign",        computeHmac(payload));
+        payload.put("sign",        computeSha512(payload));
         return payload;
     }
 
-    private String computeHmac(Map<String, String> payload) {
+    private String computeSha512(Map<String, String> payload) {
         try {
             StringBuilder sb = new StringBuilder(SERVICE_SECRET);
             payload.entrySet().stream()
@@ -352,15 +369,14 @@ class PaiementServiceTest {
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(e -> sb.append(e.getValue()));
 
-            Mac mac = Mac.getInstance("HmacSHA512");
-            mac.init(new SecretKeySpec(SERVICE_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA512"));
-            byte[] hash = mac.doFinal(sb.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] hash = MessageDigest.getInstance("SHA-512")
+                    .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format("%02x", b));
             return hex.toString();
         } catch (Exception e) {
-            throw new RuntimeException("Erreur calcul HMAC dans le test", e);
+            throw new RuntimeException("Erreur calcul SHA-512 dans le test", e);
         }
     }
 }

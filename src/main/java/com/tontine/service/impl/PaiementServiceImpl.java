@@ -26,8 +26,7 @@ import org.springframework.util.MultiValueMap;
 
 import java.net.URLEncoder;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -135,8 +134,9 @@ public class PaiementServiceImpl implements PaiementService {
         }
 
         // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
+        // Aligné sur ExpirationPaiementScheduler.DELAI_EXPIRATION_MINUTES = 30
         paiementRepository.annulerPaiementsExpiresParMembre(
-                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(10));
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(30));
 
         // Rejeter si un paiement EN_ATTENTE récent existe encore (anti-concurrent)
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
@@ -195,6 +195,7 @@ public class PaiementServiceImpl implements PaiementService {
             mtnParams.add("service",     monetbilServiceKey);
             mtnParams.add("amount",      String.valueOf(montantFacture.longValue()));
             mtnParams.add("phonenumber", phone);
+            mtnParams.add("operator",    "CM_MTNMOBILEMONEY");
             mtnParams.add("item_ref",    reference);
             mtnParams.add("notify_url",  monetbilNotifyUrl);
 
@@ -253,6 +254,7 @@ public class PaiementServiceImpl implements PaiementService {
             orangeParams.add("service",     monetbilServiceKey);
             orangeParams.add("amount",      String.valueOf(montantFacture.longValue()));
             orangeParams.add("phonenumber", phone);
+            orangeParams.add("operator",    "CM_ORANGEMONEY");
             orangeParams.add("item_ref",    reference);
             orangeParams.add("notify_url",  monetbilNotifyUrl);
 
@@ -358,7 +360,7 @@ public class PaiementServiceImpl implements PaiementService {
 
         // Auto-annuler les paiements EN_ATTENTE expirés (>30 min) pour débloquer le membre
         paiementRepository.annulerPaiementsExpiresParMembre(
-                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(10));
+                membre.getId(), PaiementStatus.EN_ATTENTE, LocalDateTime.now().minusMinutes(30));
 
         if (paiementRepository.existsByMembreIdAndStatut(membre.getId(), PaiementStatus.EN_ATTENTE)) {
             throw new BadRequestException("Un paiement est déjà en cours pour ce membre. Veuillez patienter.");
@@ -414,10 +416,13 @@ public class PaiementServiceImpl implements PaiementService {
         String espPhone = buildPhone(request.getNumeroPaiement());
 
         // ── Push automatique via api.monetbil.com/placePayment (MTN + Orange) ──
+        String espOperatorCode = request.getOperateurReel() == PaiementMode.MTN_MOBILE_MONEY
+                ? "CM_MTNMOBILEMONEY" : "CM_ORANGEMONEY";
         MultiValueMap<String, String> pushParams = new LinkedMultiValueMap<>();
         pushParams.add("service",     monetbilServiceKey);
         pushParams.add("amount",      String.valueOf(montantFacture.longValue()));
         pushParams.add("phonenumber", espPhone);
+        pushParams.add("operator",    espOperatorCode);
         pushParams.add("item_ref",    reference);
         pushParams.add("notify_url",  monetbilNotifyUrl);
 
@@ -488,12 +493,11 @@ public class PaiementServiceImpl implements PaiementService {
     public ApiResponse<String> traiterCallbackMonetbil(Map<String, String> payload) {
         String reference  = payload.get("item_ref");
         String paymentRef = payload.get("payment_ref");
-        String statut     = payload.get("status");       // SUCCESS | FAILED | PENDING
+        String statut     = payload.get("status");       // SUCCESS | SUCCESSFULL | FAILED | PENDING
         String sign       = payload.get("sign");
 
         log.info("Callback Monetbil reçu: ref={} statut={}", reference, statut);
 
-        // ── Vérification de signature HMAC-SHA512 ─────────────────────────────
         if (!verifierSignatureMonetbil(payload, sign)) {
             log.warn("Signature Monetbil invalide pour ref={}", reference);
             throw new ForbiddenException("Signature invalide");
@@ -514,7 +518,8 @@ public class PaiementServiceImpl implements PaiementService {
             return ApiResponse.success(null, "Déjà traité");
         }
 
-        if ("SUCCESS".equalsIgnoreCase(statut)) {
+        // Monetbil envoie "SUCCESS" ou "SUCCESSFULL" (leur typo dans dashboard et webhook)
+        if ("SUCCESS".equalsIgnoreCase(statut) || "SUCCESSFULL".equalsIgnoreCase(statut)) {
             // ✅ Paiement réussi
             paiement.setStatut(PaiementStatus.PAYE);
             paiement.setDatePaiement(LocalDateTime.now());
@@ -587,10 +592,10 @@ public class PaiementServiceImpl implements PaiementService {
             log.info("Cotisation enregistrée après paiement Monetbil: ref={}", reference);
             return ApiResponse.success(null, "Paiement confirmé");
 
-        } else if ("FAILED".equalsIgnoreCase(statut)) {
-            // ❌ Paiement échoué
+        } else if ("FAILED".equalsIgnoreCase(statut) || "CANCELLED".equalsIgnoreCase(statut)) {
+            // ❌ Paiement échoué ou annulé par l'utilisateur sur son téléphone
             paiement.setStatut(PaiementStatus.ANNULE);
-            paiement.setMessageOperateur("Échec Monetbil: " + payload.getOrDefault("message", "inconnu"));
+            paiement.setMessageOperateur("Échec Monetbil: " + payload.getOrDefault("message", statut));
             paiementRepository.save(paiement);
 
             notificationService.creerNotification(
@@ -603,8 +608,8 @@ public class PaiementServiceImpl implements PaiementService {
             return ApiResponse.error("Paiement échoué");
 
         } else {
-            // PENDING — rien à faire, on attend le callback final
-            log.info("Paiement en attente Monetbil: ref={}", reference);
+            // PENDING ou autre — rien à faire, on attend le callback final
+            log.info("Paiement en attente Monetbil: ref={} statut={}", reference, statut);
             return ApiResponse.success(null, "En attente");
         }
     }
@@ -730,11 +735,7 @@ public class PaiementServiceImpl implements PaiementService {
                 + "&return_url="  + URLEncoder.encode(monetbilReturnUrl, StandardCharsets.UTF_8);
     }
 
-    /**
-     * Vérifie la signature Monetbil.
-     * Algorithme : SHA-512 du serviceSecret suivi des valeurs de tous les params
-     * (sauf "sign") triés par clé alphabétiquement.
-     */
+    // Algorithme Monetbil : SHA-512(serviceSecret + valeurs triées par clé, sans "sign")
     private boolean verifierSignatureMonetbil(Map<String, String> payload, String sign) {
         if (sign == null || sign.isBlank()) return false;
         try {
@@ -744,17 +745,14 @@ public class PaiementServiceImpl implements PaiementService {
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(e -> sb.append(e.getValue()));
 
-            Mac mac = Mac.getInstance("HmacSHA512");
-            mac.init(new SecretKeySpec(
-                    monetbilServiceSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA512"));
-            byte[] hash = mac.doFinal(sb.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] hash = MessageDigest.getInstance("SHA-512")
+                    .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format("%02x", b));
-            // Comparaison en temps constant pour éviter les timing attacks
             return MessageDigest.isEqual(
-                hex.toString().toLowerCase().getBytes(StandardCharsets.UTF_8),
-                sign.toLowerCase().getBytes(StandardCharsets.UTF_8));
+                    hex.toString().toLowerCase().getBytes(StandardCharsets.UTF_8),
+                    sign.toLowerCase().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.error("Erreur vérification signature Monetbil: {}", e.getMessage());
             return false;

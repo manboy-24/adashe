@@ -34,6 +34,15 @@ public interface PaiementRepository extends JpaRepository<Paiement, Long> {
     /** Paiements EN_ATTENTE créés avant une date limite (pour expiration automatique). */
     List<Paiement> findByStatutAndCreatedAtBefore(PaiementStatus statut, LocalDateTime limit);
 
+    /**
+     * UPDATE atomique : n'annule que si le statut est encore EN_ATTENTE au moment de l'UPDATE.
+     * Évite d'écraser un PAYE posé par le webhook entre le SELECT et le save du scheduler.
+     * Retourne le nombre de lignes réellement modifiées.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Paiement p SET p.statut = com.tontine.enums.PaiementStatus.ANNULE, p.messageOperateur = 'Expiré — annulé automatiquement' WHERE p.id = :id AND p.statut = com.tontine.enums.PaiementStatus.EN_ATTENTE")
+    int annulerSiEnAttente(@Param("id") Long id);
+
     /** Annule les paiements EN_ATTENTE expirés d'un membre (>30 min) avant d'en créer un nouveau. */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Paiement p SET p.statut = com.tontine.enums.PaiementStatus.ANNULE, p.messageOperateur = 'Expiré — annulé automatiquement' WHERE p.membre.id = :membreId AND p.statut = :statut AND p.createdAt < :limit")

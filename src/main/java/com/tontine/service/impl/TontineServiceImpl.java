@@ -54,6 +54,7 @@ public class TontineServiceImpl implements TontineService {
     private final com.tontine.util.SecurityUtil securityUtil;
     private final TirageWebSocketHandler tirageWsHandler;
     private final VirementCommissionService virementCommissionService;
+    private final VirementCagnotteService   virementCagnotteService;
 
     // ── Création ─────────────────────────────────────────────────────────────
 
@@ -743,6 +744,17 @@ public class TontineServiceImpl implements TontineService {
                     + "Date du tirage : " + tirage.getDateTirage() + "\n\n"
                     + "L'équipe Adashe";
             emailAsyncService.envoyerEmailAsync(emailBenef, sujet, corps);
+        }
+
+        // Virer la cagnotte au bénéficiaire après commit
+        Long cagnotteId = virementCagnotteService.creerVirementEnAttente(tirage);
+        if (cagnotteId != null) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    virementCagnotteService.effectuerVirementAsyncParId(cagnotteId);
+                }
+            });
         }
 
         // Prélever la commission après commit (même pattern que les amendes)

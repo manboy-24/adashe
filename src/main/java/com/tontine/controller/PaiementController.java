@@ -71,8 +71,8 @@ public class PaiementController {
 
     // ── Webhooks (sans JWT — appelés par Monetbil) ────────────────────────────
 
-    @PostMapping("/webhook/monetbil")
-    @Operation(summary = "Webhook Monetbil — callback POST de confirmation de paiement")
+    @RequestMapping(value = "/webhook/monetbil", method = {RequestMethod.GET, RequestMethod.POST})
+    @Operation(summary = "Webhook Monetbil — callback GET ou POST de confirmation de paiement")
     public ResponseEntity<ApiResponse<String>> webhookMonetbil(
             @RequestParam Map<String, String> params) {
         return ResponseEntity.ok(paiementService.traiterCallbackMonetbil(params));

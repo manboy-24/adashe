@@ -204,7 +204,7 @@ public class VirementAmendeService {
         return "237" + t;
     }
 
-    // SHA-512(serviceSecret + valeurs triées par clé, sans "sign") — algorithme Monetbil
+    // MD5(serviceSecret + valeurs triées par clé, sans "sign") — algorithme officiel Monetbil
     private String signerRequete(MultiValueMap<String, String> params) throws Exception {
         StringBuilder sb = new StringBuilder(monetbilServiceSecret);
         params.entrySet().stream()
@@ -212,7 +212,7 @@ public class VirementAmendeService {
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(e -> sb.append(e.getValue().get(0)));
 
-        byte[] hash = MessageDigest.getInstance("SHA-512")
+        byte[] hash = MessageDigest.getInstance("MD5")
                 .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
         StringBuilder hex = new StringBuilder();

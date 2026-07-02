@@ -735,7 +735,8 @@ public class PaiementServiceImpl implements PaiementService {
                 + "&return_url="  + URLEncoder.encode(monetbilReturnUrl, StandardCharsets.UTF_8);
     }
 
-    // Algorithme Monetbil : SHA-512(serviceSecret + valeurs triées par clé, sans "sign")
+    // Algorithme Monetbil officiel : MD5(serviceSecret + valeurs triées par clé, sans "sign")
+    // Source : https://github.com/Monetbil/monetbil-php — Monetbil::sign()
     private boolean verifierSignatureMonetbil(Map<String, String> payload, String sign) {
         if (sign == null || sign.isBlank()) return false;
         try {
@@ -743,15 +744,17 @@ public class PaiementServiceImpl implements PaiementService {
             payload.entrySet().stream()
                     .filter(e -> !"sign".equals(e.getKey()))
                     .sorted(Map.Entry.comparingByKey())
-                    .forEach(e -> sb.append(e.getValue()));
+                    .forEach(e -> sb.append(e.getValue() != null ? e.getValue() : ""));
 
-            byte[] hash = MessageDigest.getInstance("SHA-512")
+            byte[] hash = MessageDigest.getInstance("MD5")
                     .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format("%02x", b));
+            String computed = hex.toString().toLowerCase();
+
             return MessageDigest.isEqual(
-                    hex.toString().toLowerCase().getBytes(StandardCharsets.UTF_8),
+                    computed.getBytes(StandardCharsets.UTF_8),
                     sign.toLowerCase().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.error("Erreur vérification signature Monetbil: {}", e.getMessage());

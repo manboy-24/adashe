@@ -351,17 +351,17 @@ class PaiementServiceTest {
         return r;
     }
 
-    // SHA-512(serviceSecret + valeurs triées par clé, sans "sign") — algorithme réel Monetbil
+    // MD5(serviceSecret + valeurs triées par clé, sans "sign") — algorithme officiel Monetbil
     private Map<String, String> buildSignedPayload(String ref, String paymentRef, String statut) {
         Map<String, String> payload = new HashMap<>();
         payload.put("item_ref",    ref);
         payload.put("payment_ref", paymentRef);
         payload.put("status",      statut);
-        payload.put("sign",        computeSha512(payload));
+        payload.put("sign",        computeMd5(payload));
         return payload;
     }
 
-    private String computeSha512(Map<String, String> payload) {
+    private String computeMd5(Map<String, String> payload) {
         try {
             StringBuilder sb = new StringBuilder(SERVICE_SECRET);
             payload.entrySet().stream()
@@ -369,14 +369,14 @@ class PaiementServiceTest {
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(e -> sb.append(e.getValue()));
 
-            byte[] hash = MessageDigest.getInstance("SHA-512")
+            byte[] hash = MessageDigest.getInstance("MD5")
                     .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format("%02x", b));
             return hex.toString();
         } catch (Exception e) {
-            throw new RuntimeException("Erreur calcul SHA-512 dans le test", e);
+            throw new RuntimeException("Erreur calcul MD5 dans le test", e);
         }
     }
 }

@@ -2,6 +2,7 @@ package com.tontine.controller;
 
 import com.tontine.dto.request.*;
 import com.tontine.dto.response.*;
+import com.tontine.service.ScoreFiabiliteService;
 import com.tontine.service.TontineService;
 import com.tontine.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,6 +23,7 @@ import java.util.List;
 public class TontineController {
 
     private final TontineService tontineService;
+    private final ScoreFiabiliteService scoreFiabiliteService;
     private final SecurityUtil securityUtil;
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -267,5 +269,15 @@ public class TontineController {
     @Operation(summary = "Statistiques de la tontine (créateur)")
     public ResponseEntity<StatistiquesResponse> statistiques(@PathVariable Long id) {
         return ResponseEntity.ok(tontineService.getStatistiques(id, securityUtil.getCurrentUserId()));
+    }
+
+    // ── Adashe Score : fiabilité d'un membre, analyse générée par IA ─────────
+
+    @GetMapping("/{tontineId}/membres/{membreId}/score")
+    @Operation(summary = "Adashe Score — score de fiabilité d'un membre avec explication IA (créateur)")
+    public ResponseEntity<ScoreFiabiliteResponse> scoreMembre(@PathVariable Long tontineId,
+                                                              @PathVariable Long membreId) {
+        return ResponseEntity.ok(scoreFiabiliteService.getScoreMembre(
+                tontineId, membreId, securityUtil.getCurrentUserId()));
     }
 }

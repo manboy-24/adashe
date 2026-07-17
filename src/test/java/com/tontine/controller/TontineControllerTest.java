@@ -46,6 +46,7 @@ class TontineControllerTest {
     @Autowired private ObjectMapper objectMapper;
 
     @MockBean private TontineService tontineService;
+    @MockBean private com.tontine.service.ScoreFiabiliteService scoreFiabiliteService;
     @MockBean private SecurityUtil securityUtil;
     @MockBean private JwtService jwtService;
     @MockBean private UserDetailsService userDetailsService;

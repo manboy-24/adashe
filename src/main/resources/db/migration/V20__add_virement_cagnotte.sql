@@ -1,4 +1,4 @@
-CREATE TABLE virements_cagnotte (
+CREATE TABLE IF NOT EXISTS virements_cagnotte (
     id                   BIGINT AUTO_INCREMENT PRIMARY KEY,
     tirage_id            BIGINT          NOT NULL,
     montant              DECIMAL(15,2)   NOT NULL,
@@ -9,5 +9,5 @@ CREATE TABLE virements_cagnotte (
     message_erreur       VARCHAR(500),
     created_at           DATETIME(6),
     date_virement        DATETIME,
-    CONSTRAINT fk_vc_tirage FOREIGN KEY (tirage_id) REFERENCES tirages(id)
+    CONSTRAINT fk_virement_cagnotte_tirage FOREIGN KEY (tirage_id) REFERENCES tirages(id)
 );

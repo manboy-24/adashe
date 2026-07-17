@@ -50,7 +50,10 @@ public class SecurityConfig {
             "/actuator/info",
             "/ws/**",              // JWT validé dans JwtHandshakeInterceptor, pas ici
             "/join/**",            // Page de redirection deep-link (liens WhatsApp/SMS)
-            "/.well-known/**"      // Android App Links — assetlinks.json
+            "/.well-known/**",     // Android App Links — assetlinks.json
+            "/swagger-ui/**",
+            "/swagger-ui.html",
+            "/v3/api-docs/**"
     };
 
     @Bean

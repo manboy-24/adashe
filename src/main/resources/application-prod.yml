@@ -89,9 +89,10 @@ logging:
 # ── Swagger désactivé en prod ─────────────────────────────────────────────────
 springdoc:
   api-docs:
-    enabled: false
+    enabled: true
   swagger-ui:
-    enabled: false
+    enabled: true
+    path: /swagger-ui.html
 
 # ── Actuator : exposition minimale ────────────────────────────────────────────
 management:

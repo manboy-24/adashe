@@ -41,7 +41,9 @@ spring:
         api-key: ${GEMINI_API_KEY:non-configuree}
         chat:
           options:
-            model: gemini-2.5-flash
+            # gemini-2.5-flash n'est plus ouvert aux nouveaux comptes (vérifié le 17/07/2026) ;
+            # gemini-3-flash-preview est le flash accessible sur le palier gratuit.
+            model: ${GEMINI_MODEL:gemini-3-flash-preview}
 
 # ── JWT ────────────────────────────────────────────────────────────────────────
 jwt:

@@ -1,4 +1,4 @@
--- V10 : Adashe Score — cache persistant du score de fiabilité IA par utilisateur
+-- V21 : Adashe Score — cache persistant du score de fiabilité IA par utilisateur
 
 CREATE TABLE scores_fiabilite (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,

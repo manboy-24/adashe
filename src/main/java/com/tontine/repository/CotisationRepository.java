@@ -63,9 +63,6 @@ public interface CotisationRepository extends JpaRepository<Cotisation, Long> {
     @Query("SELECT COUNT(c) FROM Cotisation c WHERE c.membre.utilisateur.id = :userId AND c.statut = 'PAYE'")
     int countPayeesByUtilisateurId(@Param("userId") Long userId);
 
-    @Query("SELECT COUNT(c) FROM Cotisation c WHERE c.membre.utilisateur.id = :userId AND c.statut = 'PAYE' AND c.estEnRetard = true")
-    int countRetardsByUtilisateurId(@Param("userId") Long userId);
-
     @Query("SELECT COALESCE(SUM(c.montantAmende), 0) FROM Cotisation c WHERE c.membre.utilisateur.id = :userId")
     BigDecimal sumAmendesByUtilisateurId(@Param("userId") Long userId);
 }

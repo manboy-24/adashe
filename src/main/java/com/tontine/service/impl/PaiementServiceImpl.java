@@ -778,7 +778,9 @@ public class PaiementServiceImpl implements PaiementService {
         if (!existe) {
             BigDecimal amende = paiement.getMontantAmende() != null
                     ? paiement.getMontantAmende() : BigDecimal.ZERO;
-            boolean estRattrapage = amende.compareTo(BigDecimal.ZERO) > 0;
+            // Aligné sur TontineServiceImpl : rattrapage = paiement d'un cycle antérieur.
+            // (L'ancienne heuristique amende > 0 casserait si l'amende devenait configurable à 0.)
+            boolean estRattrapage = numeroCycle < tontine.getCycleActuel();
 
             Cotisation cotisation = Cotisation.builder()
                     .tontine(tontine)

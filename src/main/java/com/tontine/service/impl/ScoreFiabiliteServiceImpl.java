@@ -120,10 +120,17 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                 .map(d -> (int) ChronoUnit.MONTHS.between(d, LocalDateTime.now()))
                 .orElse(0);
 
+        // Retards = nombreRetards cumulés (cycles non payés au moment du tirage,
+        // rattrapés OU NON) — la même source que le scheduler et les stats tontine.
+        // L'ancien comptage via cotisation.estEnRetard ignorait les cycles jamais
+        // rattrapés : un membre qui ne régularisait jamais avait un meilleur score
+        // que celui qui payait son amende.
+        int retards = adhesions.stream().mapToInt(MembreTontine::getNombreRetards).sum();
+
         return new StatsMembre(
                 adhesions.size(),
                 cotisationRepository.countPayeesByUtilisateurId(userId),
-                cotisationRepository.countRetardsByUtilisateurId(userId),
+                retards,
                 cotisationRepository.sumAmendesByUtilisateurId(userId),
                 tirageLitigeRepository.countByBeneficiaireUtilisateurId(userId),
                 anciennete);
@@ -133,12 +140,16 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
     //    ponctualité 40 pts · volume d'historique 25 pts · litiges 20 pts · ancienneté 15 pts
 
     int calculerScore(StatsMembre s) {
-        // Nouveau membre sans historique : score neutre de départ
-        if (s.cotisationsPayees() == 0) {
+        // Nouveau membre sans aucun historique (ni paiement ni retard) : score neutre
+        if (s.cotisationsPayees() == 0 && s.cotisationsEnRetard() == 0) {
             return 40;
         }
 
-        double ponctualite = 40.0 * (s.cotisationsPayees() - s.cotisationsEnRetard()) / s.cotisationsPayees();
+        // Chaque cycle raté (rattrapé ou non) pèse contre les cycles payés.
+        // payees / (payees + retards) reste borné [0,1] même si retards > payees
+        // (cycles jamais rattrapés — aucune cotisation n'existe pour eux).
+        double ponctualite = 40.0 * s.cotisationsPayees()
+                / (s.cotisationsPayees() + s.cotisationsEnRetard());
 
         // 24 cotisations payées (≈ 2 ans en mensuel) = plein score de volume
         double volume = 25.0 * Math.min(s.cotisationsPayees(), 24) / 24.0;

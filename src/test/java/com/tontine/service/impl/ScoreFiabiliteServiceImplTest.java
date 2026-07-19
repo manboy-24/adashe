@@ -32,8 +32,16 @@ class ScoreFiabiliteServiceImplTest {
         int sansRetard = service.calculerScore(stats(1, 10, 0, 0, 6));
         int avecRetards = service.calculerScore(stats(1, 10, 5, 0, 6));
         assertThat(avecRetards).isLessThan(sansRetard);
-        // 5 retards sur 10 → perd la moitié des 40 pts de ponctualité
-        assertThat(sansRetard - avecRetards).isEqualTo(20);
+        // ponctualité = 40 × payées/(payées+retards) : 40 → 26,67 → perte de ~13 pts
+        assertThat(sansRetard - avecRetards).isEqualTo(13);
+    }
+
+    @Test
+    void cycles_jamais_rattrapes_penalisent_le_score() {
+        // Ancien bug : un membre qui ne rattrapait jamais ses cycles ratés n'avait
+        // aucune cotisation en retard → score neutre. Désormais nombreRetards compte.
+        int fantome = service.calculerScore(stats(1, 0, 3, 0, 6));
+        assertThat(fantome).isLessThan(40);   // bien en dessous du score neutre
     }
 
     @Test

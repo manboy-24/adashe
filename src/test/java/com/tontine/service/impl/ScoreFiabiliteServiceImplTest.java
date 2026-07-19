@@ -61,6 +61,39 @@ class ScoreFiabiliteServiceImplTest {
     }
 
     @Test
+    void risque_prochain_cycle_membre_fiable() {
+        // Aucun retard, 1 tontine, score élevé → risque FAIBLE
+        StatsMembre s = stats(1, 20, 0, 0, 18);
+        int score = service.calculerScore(s);
+        assertThat(ScoreFiabiliteServiceImpl.calculerRisque(s, score)).isEqualTo("FAIBLE");
+    }
+
+    @Test
+    void risque_prochain_cycle_membre_fragile() {
+        // Plus de cycles ratés que payés + score FAIBLE → risque ELEVE
+        StatsMembre s = stats(1, 2, 3, 0, 1);
+        int score = service.calculerScore(s);
+        assertThat(score).isLessThan(45);
+        assertThat(ScoreFiabiliteServiceImpl.calculerRisque(s, score)).isEqualTo("ELEVE");
+    }
+
+    @Test
+    void risque_augmente_avec_la_charge_de_tontines() {
+        StatsMembre uneSeule = stats(1, 10, 1, 0, 6);
+        StatsMembre plusieurs = stats(4, 10, 1, 0, 6);
+        int s1 = service.calculerScore(uneSeule);
+        int s2 = service.calculerScore(plusieurs);
+        String r1 = ScoreFiabiliteServiceImpl.calculerRisque(uneSeule, s1);
+        String r2 = ScoreFiabiliteServiceImpl.calculerRisque(plusieurs, s2);
+        // La charge ne peut qu'aggraver, jamais améliorer
+        assertThat(niveauOrdinal(r2)).isGreaterThanOrEqualTo(niveauOrdinal(r1));
+    }
+
+    private int niveauOrdinal(String risque) {
+        return switch (risque) { case "ELEVE" -> 2; case "MOYEN" -> 1; default -> 0; };
+    }
+
+    @Test
     void niveaux_de_confiance() {
         assertThat(ScoreFiabiliteServiceImpl.niveauConfiance(85)).isEqualTo("ELEVE");
         assertThat(ScoreFiabiliteServiceImpl.niveauConfiance(70)).isEqualTo("ELEVE");

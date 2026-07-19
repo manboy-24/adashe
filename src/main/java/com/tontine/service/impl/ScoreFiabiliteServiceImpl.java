@@ -101,6 +101,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                 .avatarId(utilisateur.getAvatarId())
                 .score(cache.getScore())
                 .niveauConfiance(cache.getNiveauConfiance())
+                .risqueProchainCycle(cache.getRisqueProchainCycle())
                 .explication(cache.getExplication())
                 .recommandation(cache.getRecommandation())
                 .nombreTontines(stats.nombreTontines())
@@ -171,6 +172,32 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
         return "FAIBLE";
     }
 
+    // ── Score prédictif : risque de retard au prochain cycle ─────────────────
+    //    Règles déterministes (comme le score) — l'IA n'intervient que pour l'explication.
+    //    Facteurs : proportion de cycles ratés, charge (tontines simultanées), score global.
+
+    static String calculerRisque(StatsMembre s, int score) {
+        int points = 0;
+
+        int totalCycles = s.cotisationsPayees() + s.cotisationsEnRetard();
+        if (totalCycles > 0) {
+            double ratioRetards = (double) s.cotisationsEnRetard() / totalCycles;
+            if (ratioRetards >= 0.30)      points += 2;   // rate ~1 cycle sur 3
+            else if (ratioRetards >= 0.10) points += 1;
+        }
+
+        // Charge : cotiser dans 3+ tontines en parallèle augmente le risque d'impayé
+        if (s.nombreTontines() >= 3) points += 1;
+
+        // Un score global déjà dégradé est le meilleur prédicteur du prochain retard
+        if (score < 45)      points += 2;
+        else if (score < 70) points += 1;
+
+        if (points >= 4) return "ELEVE";
+        if (points >= 2) return "MOYEN";
+        return "FAIBLE";
+    }
+
     // ── Cache + IA ────────────────────────────────────────────────────────────
 
     private boolean estExpire(ScoreFiabilite cache) {
@@ -183,7 +210,8 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
 
     private ScoreFiabilite rafraichir(ScoreFiabilite existant, Utilisateur utilisateur,
                                       StatsMembre stats, int score, String niveau, String hash) {
-        AnalyseResultat resultat = genererAnalyse(utilisateur.getPrenom(), stats, score, niveau);
+        String risque = calculerRisque(stats, score);
+        AnalyseResultat resultat = genererAnalyse(utilisateur.getPrenom(), stats, score, niveau, risque);
 
         // Détection de transition AVANT écrasement — une seule alerte par dégradation
         String ancienNiveau = existant != null ? existant.getNiveauConfiance() : null;
@@ -193,6 +221,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                 : ScoreFiabilite.builder().utilisateur(utilisateur).build();
         entite.setScore(score);
         entite.setNiveauConfiance(niveau);
+        entite.setRisqueProchainCycle(risque);
         entite.setExplication(resultat.analyse().explication());
         entite.setRecommandation(resultat.analyse().recommandation());
         entite.setDonneesHash(hash);
@@ -250,7 +279,8 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
         construireReponse(utilisateur, null);
     }
 
-    private AnalyseResultat genererAnalyse(String prenom, StatsMembre stats, int score, String niveau) {
+    private AnalyseResultat genererAnalyse(String prenom, StatsMembre stats, int score,
+                                           String niveau, String risque) {
         ChatClient chatClient = chatClientProvider.getIfAvailable();
         if (chatClient == null) {
             return new AnalyseResultat(analyseSecours(stats, score), false);
@@ -260,6 +290,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                     .user(u -> u.text("""
                             Membre : {prenom}
                             Score de fiabilité calculé : {score}/100 (niveau {niveau})
+                            Risque estimé de retard au prochain cycle : {risque}
                             Nombre de tontines : {tontines}
                             Cotisations payées : {payees}
                             Cotisations en retard : {retards}
@@ -267,11 +298,13 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                             Litiges de tirage le concernant : {litiges}
                             Ancienneté dans l'application : {anciennete} mois
 
-                            Génère l'explication et la recommandation.
+                            Génère l'explication et la recommandation. Si le risque au
+                            prochain cycle est MOYEN ou ELEVE, mentionne-le dans la recommandation.
                             """)
                             .param("prenom", prenom)
                             .param("score", score)
                             .param("niveau", niveau)
+                            .param("risque", risque)
                             .param("tontines", stats.nombreTontines())
                             .param("payees", stats.cotisationsPayees())
                             .param("retards", stats.cotisationsEnRetard())

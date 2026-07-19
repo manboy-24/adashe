@@ -11,4 +11,6 @@ public enum NotificationType {
     VIREMENT_ECHEC,
     /** Le membre a été retiré d'une tontine par l'administrateur. */
     MEMBRE_RETIRE,
+    /** Résumé hebdomadaire de l'activité de la tontine, généré par IA (créateur). */
+    BRIEFING_HEBDO,
 }

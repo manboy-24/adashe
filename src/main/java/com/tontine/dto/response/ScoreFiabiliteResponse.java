@@ -18,6 +18,9 @@ public class ScoreFiabiliteResponse {
     /** ELEVE, MOYEN ou FAIBLE. */
     private String niveauConfiance;
 
+    /** Score prédictif : risque de retard au prochain cycle — FAIBLE, MOYEN ou ELEVE. */
+    private String risqueProchainCycle;
+
     /** Explication en langage simple (générée par IA). */
     private String explication;
 

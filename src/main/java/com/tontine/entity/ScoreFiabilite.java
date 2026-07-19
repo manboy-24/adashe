@@ -55,6 +55,10 @@ public class ScoreFiabilite {
     @Column(length = 50)
     private String modeleIa;
 
+    /** Score prédictif : risque estimé de retard au prochain cycle (FAIBLE | MOYEN | ELEVE). */
+    @Column(length = 10)
+    private String risqueProchainCycle;
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;

@@ -45,17 +45,23 @@ public class FirebaseConfig {
                 log.info("Firebase initialisé");
                 return FirebaseApp.initializeApp(options);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // RuntimeException (ex: IllegalArgumentException sur Base64 invalide) ou IOException
             log.warn("Erreur init Firebase : {} — push désactivé", e.getMessage());
             return null;
         }
     }
 
     // Priorité : variable d'env base64 (prod) > fichier classpath (dev)
-    private InputStream resolveCredentials() throws IOException {
+    private InputStream resolveCredentials() {
         if (credentialsJsonBase64 != null && !credentialsJsonBase64.isBlank()) {
-            byte[] decoded = Base64.getDecoder().decode(credentialsJsonBase64.trim());
-            return new ByteArrayInputStream(decoded);
+            try {
+                byte[] decoded = Base64.getDecoder().decode(credentialsJsonBase64.trim());
+                return new ByteArrayInputStream(decoded);
+            } catch (IllegalArgumentException e) {
+                log.warn("FIREBASE_CREDENTIALS_JSON invalide (Base64 corrompu : {}) — push désactivé", e.getMessage());
+                return null;
+            }
         }
         try {
             return credentialsResource.getInputStream();

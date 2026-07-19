@@ -219,7 +219,9 @@ public class TontineServiceImpl implements TontineService {
 
     @Override
     public ApiResponse<String> rejoindreParCode(String code, Long userId) {
-        Tontine tontine = tontineRepository.findByCodeInvitation(code)
+        // Les codes sont générés en majuscules — normalise la saisie (minuscules, espaces)
+        String codeNormalise = code == null ? "" : code.trim().toUpperCase();
+        Tontine tontine = tontineRepository.findByCodeInvitation(codeNormalise)
                 .orElseThrow(() -> new ResourceNotFoundException("Code d'invitation invalide"));
 
         if (tontine.getStatut() == com.tontine.enums.TontineStatus.TERMINEE) {

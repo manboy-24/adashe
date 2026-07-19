@@ -11,12 +11,12 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 spring:
-  # ── MySQL production ───────────────────────────────────────────────────────
+  # ── PostgreSQL production ──────────────────────────────────────────────────
   datasource:
-    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME}?useSSL=true&serverTimezone=UTC&characterEncoding=UTF-8&requireSSL=true
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslmode=require
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: TontineHikariCP
       maximum-pool-size: 50
@@ -42,10 +42,8 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
-        type:
-          preferred_enum_jdbc_type: 12   # VARCHAR(12) — évite le mismatch ENUM natif MySQL
         jdbc:
           batch_size: 20
           fetch_size: 50

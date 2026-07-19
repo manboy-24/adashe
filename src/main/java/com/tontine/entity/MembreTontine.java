@@ -43,11 +43,11 @@ public class MembreTontine {
     @Builder.Default
     private MembreStatut statutMembre = MembreStatut.EN_ATTENTE;
 
-    @Column(nullable = false, columnDefinition = "TINYINT(1) DEFAULT 1")
+    @Column(nullable = false, columnDefinition = "BOOLEAN DEFAULT TRUE")
     @Builder.Default
     private Boolean actif = false;
 
-    @Column(name = "cagnotte_recue_cycle_actuel", nullable = false, columnDefinition = "TINYINT(1) DEFAULT 0")
+    @Column(name = "cagnotte_recue_cycle_actuel", nullable = false, columnDefinition = "BOOLEAN DEFAULT FALSE")
     @Builder.Default
     private Boolean aCagnotteSurCycleActuel = false;
 

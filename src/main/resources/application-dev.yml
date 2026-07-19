@@ -4,12 +4,12 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 spring:
-  # ── MySQL local ────────────────────────────────────────────────────────────
+  # ── PostgreSQL local ───────────────────────────────────────────────────────
   datasource:
-    url: jdbc:mysql://localhost:3306/tontine_db?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
-    username: root
+    url: jdbc:postgresql://localhost:5432/tontine_db
+    username: postgres
     password: "manboy"
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
@@ -30,7 +30,7 @@ spring:
     show-sql: true              # SQL visible dans les logs pour déboguer
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
 
   # ── Mail : Mailtrap (intercepte sans envoyer vraiment) ─────────────────────

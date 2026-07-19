@@ -5,8 +5,7 @@
 -- ============================================================
 
 ALTER TABLE tontines
-    ADD COLUMN deleted_at DATETIME(6) NULL DEFAULT NULL
-        COMMENT 'NULL = actif ; non-NULL = supprimé (soft-delete)';
+    ADD COLUMN deleted_at TIMESTAMP(6) NULL DEFAULT NULL;
 
 -- Index pour accélérer la clause WHERE deleted_at IS NULL
 -- systématiquement appliquée par @SQLRestriction sur l'entité.

@@ -5,21 +5,21 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE virements_commission (
-    id                   BIGINT       NOT NULL AUTO_INCREMENT,
-    tirage_id            BIGINT       NOT NULL,
-    type_beneficiaire    VARCHAR(10)  NOT NULL COMMENT 'ADMIN ou ADASHE',
+    id                   BIGSERIAL     NOT NULL,
+    tirage_id            BIGINT        NOT NULL,
+    type_beneficiaire    VARCHAR(10)   NOT NULL,
     montant              DECIMAL(15,2) NOT NULL,
-    operateur            VARCHAR(30)  NOT NULL,
-    numero_beneficiaire  VARCHAR(20)  NOT NULL,
-    statut               VARCHAR(20)  NOT NULL DEFAULT 'EN_ATTENTE',
-    reference_transfert  VARCHAR(100) NULL,
-    message_erreur       VARCHAR(500) NULL,
-    created_at           DATETIME     NULL,
-    date_virement        DATETIME     NULL,
+    operateur            VARCHAR(30)   NOT NULL,
+    numero_beneficiaire  VARCHAR(20)   NOT NULL,
+    statut               VARCHAR(20)   NOT NULL DEFAULT 'EN_ATTENTE',
+    reference_transfert  VARCHAR(100)  NULL,
+    message_erreur       VARCHAR(500)  NULL,
+    created_at           TIMESTAMP     NULL,
+    date_virement        TIMESTAMP     NULL,
 
     PRIMARY KEY (id),
-    INDEX idx_vc_tirage   (tirage_id),
-    INDEX idx_vc_statut   (statut),
-
     CONSTRAINT fk_vc_tirage FOREIGN KEY (tirage_id) REFERENCES tirages (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+);
+
+CREATE INDEX idx_vc_tirage ON virements_commission (tirage_id);
+CREATE INDEX idx_vc_statut ON virements_commission (statut);

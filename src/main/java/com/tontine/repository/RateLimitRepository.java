@@ -15,21 +15,18 @@ import java.util.Optional;
 public interface RateLimitRepository extends JpaRepository<RateLimit, RateLimitId> {
 
     /**
-     * UPSERT atomique MySQL :
-     * - Première requête de l'IP sur cet endpoint → INSERT avec hits = 1.
-     * - Requête suivante dans la même fenêtre → hits + 1.
+     * UPSERT atomique PostgreSQL :
+     * - Première requête → INSERT avec hits = 1.
+     * - Requête suivante dans la fenêtre → hits + 1.
      * - Fenêtre expirée → remet hits à 1 et reset window_start.
-     *
-     * L'atomicité est garantie par le moteur InnoDB (verrou de ligne sur la PK).
-     * Pas besoin de synchronized côté applicatif.
      */
     @Modifying
     @Query(value = """
             INSERT INTO rate_limit (ip, endpoint, hits, window_start)
-            VALUES (:ip, :endpoint, 1, NOW(3))
-            ON DUPLICATE KEY UPDATE
-              hits         = IF(TIMESTAMPDIFF(SECOND, window_start, NOW(3)) > :windowSec, 1, hits + 1),
-              window_start = IF(TIMESTAMPDIFF(SECOND, window_start, NOW(3)) > :windowSec, NOW(3), window_start)
+            VALUES (:ip, :endpoint, 1, NOW())
+            ON CONFLICT (ip, endpoint) DO UPDATE SET
+              hits         = CASE WHEN EXTRACT(EPOCH FROM (NOW() - rate_limit.window_start)) > :windowSec THEN 1 ELSE rate_limit.hits + 1 END,
+              window_start = CASE WHEN EXTRACT(EPOCH FROM (NOW() - rate_limit.window_start)) > :windowSec THEN NOW() ELSE rate_limit.window_start END
             """, nativeQuery = true)
     void upsert(@Param("ip")        String ip,
                 @Param("endpoint")  String endpoint,

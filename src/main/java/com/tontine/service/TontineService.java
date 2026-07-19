@@ -38,6 +38,8 @@ public interface TontineService {
     TirageLitigeResponse resoudreLitige(Long tontineId, Long tirageId, Long litigeId, boolean confirme, String commentaire, Long adminId);
     List<TirageResponse> getHistoriqueTirages(Long tontineId, Long userId);
     StatistiquesResponse getStatistiques(Long tontineId, Long userId);
+    /** Stats + cotisations de toutes les tontines de l'utilisateur en un seul appel (écran Statistiques mobile). */
+    StatsGlobalesResponse getStatistiquesGlobales(Long userId);
     byte[] exportCotisationsCsv(Long tontineId, Long userId);
     DashboardResponse getDashboard(Long userId);
     /** Redéfinit l'ordre de passage des membres (rotatif). Admin only, avant ou pendant la tontine. */

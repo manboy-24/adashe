@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -997,7 +998,12 @@ public class TontineServiceImpl implements TontineService {
                 .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
 
         verifierEstAdmin(tontineId, userId);
+        return construireStatistiques(tontine);
+    }
 
+    /** Calcul des statistiques d'une tontine — sans contrôle d'accès (fait par l'appelant). */
+    private StatistiquesResponse construireStatistiques(Tontine tontine) {
+        Long tontineId = tontine.getId();
         BigDecimal totalCollecte   = cotisationRepository.sumMontantPayeByTontineId(tontineId);
         BigDecimal totalDistribue  = tirageRepository.sumMontantDistribueByTontineId(tontineId);
         List<MembreTontine> membres = membreRepository.findByTontineIdAndActifTrue(tontineId);
@@ -1034,6 +1040,34 @@ public class TontineServiceImpl implements TontineService {
                 .tauxPonctualite(Math.round(tauxPonctualite * 10.0) / 10.0)
                 .statsParMembre(statsParMembre)
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public StatsGlobalesResponse getStatistiquesGlobales(Long userId) {
+        // Toutes les tontines de l'utilisateur en une requête (mêmes données que getMesTontines)
+        List<Tontine> tontines = tontineRepository
+                .findAllByMembreId(userId, PageRequest.of(0, 100)).getContent();
+
+        List<StatsGlobalesResponse.TontineStatsBloc> blocs = tontines.stream().map(tontine -> {
+            boolean estAdmin = membreRepository
+                    .findByUtilisateurIdAndTontineId(userId, tontine.getId())
+                    .map(m -> m.getRoleMembreTontine() == MembreTontineRole.CREATEUR
+                            || m.getRoleMembreTontine() == MembreTontineRole.ADMIN)
+                    .orElse(false);
+
+            List<CotisationResponse> cotisations = cotisationRepository
+                    .findByTontineIdOrderByCreatedAtDesc(tontine.getId(), PageRequest.of(0, 200))
+                    .getContent().stream().map(this::toCotisationResponse).collect(Collectors.toList());
+
+            return StatsGlobalesResponse.TontineStatsBloc.builder()
+                    .tontineId(tontine.getId())
+                    .statistiques(estAdmin ? construireStatistiques(tontine) : null)
+                    .cotisations(cotisations)
+                    .build();
+        }).collect(Collectors.toList());
+
+        return StatsGlobalesResponse.builder().tontines(blocs).build();
     }
 
     // ── Contrôles d'accès ─────────────────────────────────────────────────────

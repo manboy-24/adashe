@@ -271,6 +271,12 @@ public class TontineController {
         return ResponseEntity.ok(tontineService.getStatistiques(id, securityUtil.getCurrentUserId()));
     }
 
+    @GetMapping("/statistiques/globales")
+    @Operation(summary = "Stats + cotisations de toutes mes tontines en un seul appel (écran Statistiques mobile)")
+    public ResponseEntity<StatsGlobalesResponse> statistiquesGlobales() {
+        return ResponseEntity.ok(tontineService.getStatistiquesGlobales(securityUtil.getCurrentUserId()));
+    }
+
     // ── Adashe Score : fiabilité d'un membre, analyse générée par IA ─────────
 
     @GetMapping("/{tontineId}/membres/{membreId}/score")

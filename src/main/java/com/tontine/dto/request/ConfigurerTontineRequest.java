@@ -7,8 +7,8 @@ import java.math.BigDecimal;
 @Data
 public class ConfigurerTontineRequest {
 
-    @NotNull
-    @DecimalMin("0.5")
+    // Optionnelle — absente ou 0 = aucune commission prélevée au tirage
+    @DecimalMin("0.0")
     @DecimalMax("10.0")
     private Float commissionPourcent;
 

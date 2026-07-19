@@ -1,7 +1,6 @@
 package com.tontine.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.tontine.config.DeveloppeurCompteConfig;
 import com.tontine.entity.CompteWallet;
 import com.tontine.entity.Tirage;
 import com.tontine.entity.VirementCommission;
@@ -23,7 +22,6 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -33,7 +31,7 @@ import java.util.Map;
 
 /**
  * Gère les virements de commission prélevés à chaque tirage confirmé.
- * Flux : 3/4 → wallet actif de l'admin, 1/4 → compte Adashe.
+ * Flux : 100% → wallet actif de l'admin (créateur de la tontine).
  * Même pattern async/afterCommit que VirementAmendeService.
  */
 @Service
@@ -44,7 +42,6 @@ public class VirementCommissionService {
     private final VirementCommissionRepository virementCommissionRepository;
     private final CompteWalletRepository compteWalletRepository;
     private final MonetbilGateway monetbilGateway;
-    private final DeveloppeurCompteConfig developpeurCompte;
 
     @Lazy
     @Autowired
@@ -60,11 +57,11 @@ public class VirementCommissionService {
     private String monetbilTransferUrl;
 
     /**
-     * Crée 2 lignes VirementCommission (EN_ATTENTE) dans la transaction appelante.
+     * Crée la ligne VirementCommission (EN_ATTENTE) dans la transaction appelante.
      * Appelé depuis confirmerTirage() avant le commit — les IDs sont ensuite
      * dispatché via afterCommit → effectuerVirementsAsyncParIds.
      *
-     * @return liste des IDs créés (0, 1 ou 2 éléments selon les wallets disponibles)
+     * @return liste des IDs créés (0 ou 1 élément selon les wallets disponibles)
      */
     @Transactional
     public List<Long> creerVirementsEnAttente(Tirage tirage) {
@@ -89,40 +86,21 @@ public class VirementCommissionService {
 
         PaiementMode operateur = walletAdmin.getOperateur();
 
-        // 3/4 pour l'admin, 1/4 pour Adashe (arrondi inférieur pour Adashe)
-        BigDecimal partAdmin  = commission.multiply(BigDecimal.valueOf(3))
-                .divide(BigDecimal.valueOf(4), 0, RoundingMode.FLOOR);
-        BigDecimal partAdashe = commission.subtract(partAdmin);
-
+        // 100% de la commission pour l'admin
         List<Long> ids = new ArrayList<>();
 
-        if (partAdmin.compareTo(BigDecimal.ZERO) > 0) {
-            VirementCommission vc = VirementCommission.builder()
-                    .tirage(tirage)
-                    .typeBeneficiaire(TypeBeneficiaire.ADMIN)
-                    .montant(partAdmin)
-                    .operateur(operateur)
-                    .numeroBeneficiaire(normaliserTel(walletAdmin.getTelephone()))
-                    .statut(VirementAmendeStatut.EN_ATTENTE)
-                    .build();
-            ids.add(virementCommissionRepository.save(vc).getId());
-        }
+        VirementCommission vc = VirementCommission.builder()
+                .tirage(tirage)
+                .typeBeneficiaire(TypeBeneficiaire.ADMIN)
+                .montant(commission)
+                .operateur(operateur)
+                .numeroBeneficiaire(normaliserTel(walletAdmin.getTelephone()))
+                .statut(VirementAmendeStatut.EN_ATTENTE)
+                .build();
+        ids.add(virementCommissionRepository.save(vc).getId());
 
-        if (partAdashe.compareTo(BigDecimal.ZERO) > 0) {
-            String numAdashe = resoudreNumeroAdashe(operateur);
-            VirementCommission vc = VirementCommission.builder()
-                    .tirage(tirage)
-                    .typeBeneficiaire(TypeBeneficiaire.ADASHE)
-                    .montant(partAdashe)
-                    .operateur(operateur)
-                    .numeroBeneficiaire(numAdashe)
-                    .statut(VirementAmendeStatut.EN_ATTENTE)
-                    .build();
-            ids.add(virementCommissionRepository.save(vc).getId());
-        }
-
-        log.info("[VirementCommission] Tirage {} — {} XAF planifiés ({} admin + {} Adashe) via {}",
-                tirage.getId(), commission, partAdmin, partAdashe, operateur);
+        log.info("[VirementCommission] Tirage {} — {} XAF planifiés (100% admin) via {}",
+                tirage.getId(), commission, operateur);
         return ids;
     }
 
@@ -181,13 +159,6 @@ public class VirementCommissionService {
             vc.setMessageErreur(e.getMessage());
             log.error("[VirementCommission] Erreur transfert {} : {}", reference, e.getMessage());
         }
-    }
-
-    private String resoudreNumeroAdashe(PaiementMode operateur) {
-        String raw = (operateur == PaiementMode.MTN_MOBILE_MONEY)
-                ? developpeurCompte.getMtnMomo()
-                : developpeurCompte.getOrangeMoney();
-        return normaliserTel(raw);
     }
 
     private String normaliserTel(String telephone) {

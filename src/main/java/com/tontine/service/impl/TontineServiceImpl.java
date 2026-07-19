@@ -375,7 +375,17 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Renseignez au moins un numéro Mobile Money (MTN ou Orange)");
         }
 
-        tontine.setCommissionPourcent(request.getCommissionPourcent());
+        // La commission est verrouillée dès le démarrage — configurable uniquement en EN_ATTENTE
+        Float nouvelleCommission = request.getCommissionPourcent() != null
+                ? request.getCommissionPourcent() : 0.0f;
+        if (tontine.getStatut() != com.tontine.enums.TontineStatus.EN_ATTENTE) {
+            if (!nouvelleCommission.equals(tontine.getCommissionPourcent())) {
+                throw new BadRequestException(
+                        "La commission ne peut plus être modifiée après le démarrage de la tontine");
+            }
+        } else {
+            tontine.setCommissionPourcent(nouvelleCommission);
+        }
         tontine.setNumeroMtnMomo(request.getNumeroMtnMomo());
         tontine.setNumeroOrangeMomo(request.getNumeroOrangeMomo());
 

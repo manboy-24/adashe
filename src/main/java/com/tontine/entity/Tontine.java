@@ -73,10 +73,10 @@ public class Tontine {
     @Column(unique = true, nullable = false)
     private String codeInvitation;
 
-    /** Commission prélevée sur le gain de chaque tirage (en %). */
+    /** Commission de l'admin sur chaque tirage (en %). 0 par défaut — l'admin doit la configurer avant le démarrage. */
     @Column(nullable = false)
     @Builder.Default
-    private Float commissionPourcent = 1.0f;
+    private Float commissionPourcent = 0.0f;
 
     /** Amende fixe prélevée sur tout membre qui rattrape un cycle non payé (en devise de la tontine). */
     @Column(nullable = false)

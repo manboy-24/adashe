@@ -30,6 +30,8 @@ public class RappelCotisationScheduler {
     private final NotificationService     notificationService;
     private final NotificationRepository  notificationRepository;
     private final SmsAsyncService         smsAsyncService;
+    private final com.tontine.service.ScoreFiabiliteService scoreFiabiliteService;
+    private final ScoreFiabiliteRepository scoreFiabiliteRepository;
 
     // ── 1. Rappel J-3 : "Le tirage approche" ─────────────────────────────────
     @Scheduled(cron = "0 0 9 * * ?")
@@ -185,8 +187,53 @@ public class RappelCotisationScheduler {
                     membreRepository.save(membre);
                     log.info("[Scheduler] Retard marqué: {} dans {}",
                             membre.getUtilisateur().getTelephone(), tontine.getNom());
+
+                    // Un retard dégrade le score : recalcule immédiatement le cache —
+                    // déclenche la notification SCORE_CRITIQUE si passage au niveau FAIBLE
+                    try {
+                        scoreFiabiliteService.rafraichirScoreUtilisateur(membre.getUtilisateur().getId());
+                    } catch (Exception e) {
+                        log.warn("[Scheduler] Rafraîchissement score impossible pour user {} : {}",
+                                membre.getUtilisateur().getId(), e.getMessage());
+                    }
                 }
             }
+        }
+    }
+
+    // ── 5. Suivi renforcé : rappel quotidien pour les membres au score FAIBLE ──
+    //
+    // Un membre au score critique n'ayant pas payé le cycle courant reçoit un rappel
+    // CHAQUE JOUR (10h) — les autres membres ne reçoivent que les rappels standards
+    // (J-3, échéance, 2/3 du cycle). C'est le suivi rapproché des profils à risque.
+    //
+    @Scheduled(cron = "0 0 10 * * ?")
+    @SchedulerLock(name = "rappelRenforceScoreCritique", lockAtMostFor = "10m", lockAtLeastFor = "1m")
+    @Transactional(readOnly = true)
+    public void rappelRenforceScoreCritique() {
+        LocalDateTime debutJour = LocalDate.now().atStartOfDay();
+
+        for (Tontine tontine : tontineRepository.findToutesActives()) {
+            membreRepository.findByTontineIdAndActifTrue(tontine.getId()).stream()
+                .filter(m -> !aPayeCycle(m, tontine))
+                .filter(m -> scoreFiabiliteRepository.findByUtilisateurId(m.getUtilisateur().getId())
+                        .map(s -> "FAIBLE".equals(s.getNiveauConfiance()))
+                        .orElse(false))
+                // Anti-doublon : un seul rappel renforcé par jour et par tontine
+                .filter(m -> !notificationRepository.existsByUtilisateurIdAndReferenceIdAndTypeAndCreatedAtAfter(
+                        m.getUtilisateur().getId(), tontine.getId(),
+                        NotificationType.SCORE_CRITIQUE, debutJour))
+                .forEach(m -> {
+                    String msg = "Votre cotisation de " + tontine.getMontantContribution() + " "
+                            + tontine.getDevise() + " pour " + tontine.getNom()
+                            + " (cycle " + tontine.getCycleActuel() + ") est attendue. "
+                            + "Payer à temps fera remonter votre score de fiabilité.";
+                    notificationService.creerNotification(m.getUtilisateur(), tontine,
+                            "⏰ Rappel important — cotisation attendue", msg,
+                            NotificationType.SCORE_CRITIQUE);
+                    smsAsyncService.envoyerSmsAsync(m.getUtilisateur().getTelephone(), msg);
+                });
+            log.info("[Scheduler] Rappels renforcés (score FAIBLE) pour tontine: {}", tontine.getNom());
         }
     }
 

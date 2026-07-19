@@ -7,7 +7,9 @@ import com.tontine.entity.Utilisateur;
 import com.tontine.enums.MembreTontineRole;
 import com.tontine.exception.ForbiddenException;
 import com.tontine.exception.ResourceNotFoundException;
+import com.tontine.enums.NotificationType;
 import com.tontine.repository.*;
+import com.tontine.service.NotificationService;
 import com.tontine.service.ScoreFiabiliteService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +44,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
     private final TirageLitigeRepository tirageLitigeRepository;
     private final ScoreFiabiliteRepository scoreRepository;
     private final UtilisateurRepository utilisateurRepository;
+    private final NotificationService notificationService;
     private final ObjectProvider<ChatClient> chatClientProvider;
 
     private static final int CACHE_VALIDITE_HEURES = 24;
@@ -182,6 +185,10 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
                                       StatsMembre stats, int score, String niveau, String hash) {
         AnalyseResultat resultat = genererAnalyse(utilisateur.getPrenom(), stats, score, niveau);
 
+        // Détection de transition AVANT écrasement — une seule alerte par dégradation
+        String ancienNiveau = existant != null ? existant.getNiveauConfiance() : null;
+        boolean devientCritique = "FAIBLE".equals(niveau) && !"FAIBLE".equals(ancienNiveau);
+
         ScoreFiabilite entite = existant != null ? existant
                 : ScoreFiabilite.builder().utilisateur(utilisateur).build();
         entite.setScore(score);
@@ -190,7 +197,57 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
         entite.setRecommandation(resultat.analyse().recommandation());
         entite.setDonneesHash(hash);
         entite.setModeleIa(resultat.viaIa() ? "gemini-2.5-flash" : null);
-        return scoreRepository.save(entite);
+        ScoreFiabilite saved = scoreRepository.save(entite);
+
+        if (devientCritique) notifierScoreCritique(utilisateur, score);
+        return saved;
+    }
+
+    /**
+     * Score passé à FAIBLE : alerte les créateurs des tontines actives du membre
+     * (outil de décision) et le membre lui-même (transparence + motivation).
+     */
+    private void notifierScoreCritique(Utilisateur utilisateur, int score) {
+        try {
+            List<MembreTontine> adhesionsActives = membreRepository.findByUtilisateurId(utilisateur.getId())
+                    .stream().filter(m -> Boolean.TRUE.equals(m.getActif())).toList();
+            if (adhesionsActives.isEmpty()) return;
+
+            String prenom = utilisateur.getPrenom();
+
+            // Créateurs distincts (hors le membre lui-même)
+            adhesionsActives.stream()
+                    .filter(m -> !m.getTontine().getCreateur().getId().equals(utilisateur.getId()))
+                    .collect(java.util.stream.Collectors.toMap(
+                            m -> m.getTontine().getCreateur().getId(), m -> m, (a, b) -> a))
+                    .values()
+                    .forEach(m -> notificationService.creerNotification(
+                            m.getTontine().getCreateur(), m.getTontine(),
+                            "⚠️ Fiabilité en baisse — " + prenom,
+                            "Le score de fiabilité de " + prenom + " est passé à FAIBLE (" + score
+                                    + "/100). Consultez sa fiche et suivez ses paiements de près.",
+                            NotificationType.SCORE_CRITIQUE));
+
+            // Le membre est aussi prévenu — il saura pourquoi il reçoit plus de rappels
+            MembreTontine premiere = adhesionsActives.get(0);
+            notificationService.creerNotification(utilisateur, premiere.getTontine(),
+                    "Votre score de fiabilité a baissé",
+                    "Votre Adashe Score est passé à FAIBLE (" + score + "/100). "
+                            + "Payez vos cotisations à temps pour le faire remonter.",
+                    NotificationType.SCORE_CRITIQUE);
+        } catch (Exception e) {
+            log.warn("Notification score critique impossible : {}", e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public void rafraichirScoreUtilisateur(Long utilisateurId) {
+        Utilisateur utilisateur = utilisateurRepository.findById(utilisateurId).orElse(null);
+        if (utilisateur == null) return;
+        // Recalcule et rafraîchit le cache si les données ont changé — déclenche
+        // la notification SCORE_CRITIQUE en cas de passage au niveau FAIBLE.
+        construireReponse(utilisateur, null);
     }
 
     private AnalyseResultat genererAnalyse(String prenom, StatsMembre stats, int score, String niveau) {

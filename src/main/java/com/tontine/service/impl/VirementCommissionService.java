@@ -5,11 +5,13 @@ import com.tontine.entity.CompteWallet;
 import com.tontine.entity.Tirage;
 import com.tontine.entity.VirementCommission;
 import com.tontine.entity.VirementCommission.TypeBeneficiaire;
+import com.tontine.enums.NotificationType;
 import com.tontine.enums.PaiementMode;
 import com.tontine.enums.VirementAmendeStatut;
 import com.tontine.gateway.MonetbilGateway;
 import com.tontine.repository.CompteWalletRepository;
 import com.tontine.repository.VirementCommissionRepository;
+import com.tontine.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +44,7 @@ public class VirementCommissionService {
     private final VirementCommissionRepository virementCommissionRepository;
     private final CompteWalletRepository compteWalletRepository;
     private final MonetbilGateway monetbilGateway;
+    private final NotificationService notificationService;
 
     @Lazy
     @Autowired
@@ -121,7 +124,31 @@ public class VirementCommissionService {
 
     @Transactional
     public VirementCommission enregistrerResultat(VirementCommission vc) {
-        return virementCommissionRepository.save(vc);
+        VirementCommission saved = virementCommissionRepository.save(vc);
+        // Notifier l'admin (bénéficiaire de la commission) — dans la TX pour les lazy loads
+        try {
+            if (saved.getTypeBeneficiaire() == TypeBeneficiaire.ADMIN) {
+                var tontine = saved.getTirage().getTontine();
+                var admin   = tontine.getCreateur();
+                if (saved.getStatut() == VirementAmendeStatut.SUCCES) {
+                    notificationService.creerNotification(admin, tontine,
+                            "💰 Commission virée",
+                            "Votre commission de " + saved.getMontant() + " FCFA ("
+                                    + tontine.getNom() + ") a été envoyée sur votre Mobile Money.",
+                            NotificationType.VIREMENT_RECU);
+                } else if (saved.getStatut() == VirementAmendeStatut.ECHEC) {
+                    notificationService.creerNotification(admin, tontine,
+                            "⚠️ Virement de commission échoué",
+                            "Le virement de votre commission (" + saved.getMontant() + " FCFA, "
+                                    + tontine.getNom() + ") a échoué : "
+                                    + (saved.getMessageErreur() != null ? saved.getMessageErreur() : "erreur inconnue"),
+                            NotificationType.VIREMENT_ECHEC);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[VirementCommission] Notification impossible : {}", e.getMessage());
+        }
+        return saved;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

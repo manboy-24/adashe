@@ -24,4 +24,12 @@ public interface ScoreFiabiliteService {
      * @param demandeurId utilisateur qui consulte (transmis par le contrôleur — invariant CLAUDE.md)
      */
     ScoreFiabiliteResponse getScorePreview(Long tontineId, String telephone, Long demandeurId);
+
+    /**
+     * Recalcule le score d'un utilisateur et rafraîchit le cache si nécessaire.
+     * Appelé par le scheduler après un événement dégradant (retard marqué) —
+     * déclenche la notification SCORE_CRITIQUE si le niveau passe à FAIBLE.
+     * Aucun contrôle d'accès : usage interne (scheduler) uniquement.
+     */
+    void rafraichirScoreUtilisateur(Long utilisateurId);
 }

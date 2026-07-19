@@ -311,6 +311,14 @@ public class TontineServiceImpl implements TontineService {
         membre.setActif(false);
         membre.setStatutMembre(MembreStatut.RETIRE);
         membreRepository.save(membre);
+
+        Tontine tontine = membre.getTontine();
+        notificationService.creerNotification(membre.getUtilisateur(), tontine,
+                "Retrait de la tontine",
+                "Vous avez été retiré de la tontine « " + tontine.getNom()
+                        + " » par l'administrateur. Contactez-le pour toute question.",
+                NotificationType.MEMBRE_RETIRE);
+
         return ApiResponse.success(null, "Membre retiré");
     }
 

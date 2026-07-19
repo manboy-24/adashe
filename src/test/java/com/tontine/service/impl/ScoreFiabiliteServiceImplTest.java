@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ScoreFiabiliteServiceImplTest {
 
     private final ScoreFiabiliteServiceImpl service =
-            new ScoreFiabiliteServiceImpl(null, null, null, null, null, null);
+            new ScoreFiabiliteServiceImpl(null, null, null, null, null, null, null);
 
     private StatsMembre stats(int tontines, int payees, int retards, int litiges, int mois) {
         return new StatsMembre(tontines, payees, retards, BigDecimal.ZERO, litiges, mois);

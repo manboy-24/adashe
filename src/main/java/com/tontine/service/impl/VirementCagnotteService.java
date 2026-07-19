@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.tontine.entity.CompteWallet;
 import com.tontine.entity.Tirage;
 import com.tontine.entity.VirementCagnotte;
+import com.tontine.enums.NotificationType;
 import com.tontine.enums.PaiementMode;
 import com.tontine.enums.VirementAmendeStatut;
 import com.tontine.gateway.MonetbilGateway;
 import com.tontine.repository.CompteWalletRepository;
 import com.tontine.repository.VirementCagnotteRepository;
+import com.tontine.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +42,7 @@ public class VirementCagnotteService {
     private final VirementCagnotteRepository virementCagnotteRepository;
     private final CompteWalletRepository     compteWalletRepository;
     private final MonetbilGateway            monetbilGateway;
+    private final NotificationService        notificationService;
 
     @Lazy
     @Autowired
@@ -113,7 +116,37 @@ public class VirementCagnotteService {
 
     @Transactional
     public VirementCagnotte enregistrerResultat(VirementCagnotte vc) {
-        return virementCagnotteRepository.save(vc);
+        VirementCagnotte saved = virementCagnotteRepository.save(vc);
+        // Notifications dans la TX — les relations lazy (tirage → bénéficiaire/tontine) sont chargeables
+        try {
+            var tirage       = saved.getTirage();
+            var beneficiaire = tirage.getBeneficiaire().getUtilisateur();
+            var tontine      = tirage.getTontine();
+            if (saved.getStatut() == VirementAmendeStatut.SUCCES) {
+                notificationService.creerNotification(beneficiaire, tontine,
+                        "💰 Cagnotte envoyée",
+                        "Votre cagnotte de " + saved.getMontant() + " FCFA (" + tontine.getNom()
+                                + ") a été envoyée sur votre compte Mobile Money "
+                                + saved.getNumeroBeneficiaire() + ".",
+                        NotificationType.VIREMENT_RECU);
+            } else if (saved.getStatut() == VirementAmendeStatut.ECHEC) {
+                notificationService.creerNotification(beneficiaire, tontine,
+                        "⚠️ Virement de cagnotte échoué",
+                        "L'envoi de votre cagnotte de " + saved.getMontant() + " FCFA ("
+                                + tontine.getNom() + ") a échoué. L'administrateur a été prévenu.",
+                        NotificationType.VIREMENT_ECHEC);
+                notificationService.creerNotification(tontine.getCreateur(), tontine,
+                        "⚠️ Virement de cagnotte échoué",
+                        "Le virement de la cagnotte (" + saved.getMontant() + " FCFA) vers "
+                                + beneficiaire.getPrenom() + " a échoué : "
+                                + (saved.getMessageErreur() != null ? saved.getMessageErreur() : "erreur inconnue")
+                                + ". Un transfert manuel peut être nécessaire.",
+                        NotificationType.VIREMENT_ECHEC);
+            }
+        } catch (Exception e) {
+            log.warn("[VirementCagnotte] Notification impossible : {}", e.getMessage());
+        }
+        return saved;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

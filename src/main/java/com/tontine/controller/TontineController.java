@@ -279,6 +279,14 @@ public class TontineController {
 
     // ── Adashe Score : fiabilité d'un membre, analyse générée par IA ─────────
 
+    @GetMapping("/{tontineId}/score-preview")
+    @Operation(summary = "Adashe Score — aperçu de fiabilité par téléphone AVANT invitation (créateur)")
+    public ResponseEntity<ScoreFiabiliteResponse> scorePreview(@PathVariable Long tontineId,
+                                                               @RequestParam String telephone) {
+        return ResponseEntity.ok(scoreFiabiliteService.getScorePreview(
+                tontineId, telephone, securityUtil.getCurrentUserId()));
+    }
+
     @GetMapping("/{tontineId}/membres/{membreId}/score")
     @Operation(summary = "Adashe Score — score de fiabilité d'un membre avec explication IA (créateur)")
     public ResponseEntity<ScoreFiabiliteResponse> scoreMembre(@PathVariable Long tontineId,

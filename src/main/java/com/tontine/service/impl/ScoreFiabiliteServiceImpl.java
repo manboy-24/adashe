@@ -41,6 +41,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
     private final CotisationRepository cotisationRepository;
     private final TirageLitigeRepository tirageLitigeRepository;
     private final ScoreFiabiliteRepository scoreRepository;
+    private final UtilisateurRepository utilisateurRepository;
     private final ObjectProvider<ChatClient> chatClientProvider;
 
     private static final int CACHE_VALIDITE_HEURES = 24;
@@ -63,7 +64,23 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
             throw new ResourceNotFoundException("Membre non trouvé dans cette tontine");
         }
 
-        Utilisateur utilisateur = membre.getUtilisateur();
+        return construireReponse(membre.getUtilisateur(), membre.getId());
+    }
+
+    @Override
+    @Transactional
+    public ScoreFiabiliteResponse getScorePreview(Long tontineId, String telephone, Long demandeurId) {
+        verifierEstAdmin(tontineId, demandeurId);
+
+        // Même recherche que l'invitation (ajouterMembre) — le preview reflète l'invitation
+        Utilisateur utilisateur = utilisateurRepository.findByTelephone(telephone)
+                .orElseThrow(() -> new ResourceNotFoundException("Aucun compte avec ce numéro: " + telephone));
+
+        return construireReponse(utilisateur, null);   // membreId null : pas encore membre
+    }
+
+    /** Calcul + cache + IA — partagé entre le flux membre existant et le preview par téléphone. */
+    private ScoreFiabiliteResponse construireReponse(Utilisateur utilisateur, Long membreId) {
         StatsMembre stats = agregerStats(utilisateur.getId());
         int score = calculerScore(stats);
         String niveau = niveauConfiance(score);
@@ -75,7 +92,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
         }
 
         return ScoreFiabiliteResponse.builder()
-                .membreId(membre.getId())
+                .membreId(membreId)
                 .utilisateurId(utilisateur.getId())
                 .nomComplet(utilisateur.getPrenom() + " " + utilisateur.getNom())
                 .avatarId(utilisateur.getAvatarId())

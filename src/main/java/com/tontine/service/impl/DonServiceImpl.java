@@ -122,9 +122,9 @@ public class DonServiceImpl implements DonService {
                 String canal = response.path("channel_name").asText(
                         request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY ? "MTN Mobile Money" : "Orange Money");
                 String instructions = ussd.isBlank()
-                        ? "Une fenêtre de confirmation s'affiche sur votre téléphone — entrez votre code secret pour valider votre don."
-                        : "Composez " + ussd + " sur votre téléphone " + canal + ", puis entrez votre code secret pour valider votre don de "
-                                + montant.longValue() + " FCFA.";
+                        ? "Une fenêtre de confirmation devrait s'afficher sur votre téléphone — entrez votre code secret pour valider votre don."
+                        : "Une fenêtre de confirmation devrait s'afficher sur votre téléphone (" + canal + ") — entrez votre code secret pour valider votre don de "
+                                + montant.longValue() + " FCFA. Si rien ne s'affiche, composez " + ussd + " pour valider.";
                 log.info("Don {} initié ({} FCFA) — flow={} ussd={}", reference, montant.longValue(),
                         response.path("flow").asText(""), ussd);
                 return toResponse(don, instructions, ussd.isBlank() ? null : ussd);

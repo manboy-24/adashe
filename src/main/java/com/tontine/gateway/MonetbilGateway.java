@@ -42,12 +42,23 @@ public class MonetbilGateway {
         headers.set("Origin", "https://www.monetbil.com");
         headers.set("Referer", "https://www.monetbil.com/");
         HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(params, headers);
-        ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, entity, String.class);
-        String body = response.getBody();
-        if (body != null && body.startsWith("<")) {
-            throw new RuntimeException("Monetbil CAPTCHA — réponse HTML inattendue. IP serveur bloquée.");
+        try {
+            ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, entity, String.class);
+            String body = response.getBody();
+            if (body != null && body.startsWith("<")) {
+                throw new RuntimeException("Monetbil CAPTCHA — réponse HTML inattendue. IP serveur bloquée.");
+            }
+            return objectMapper.readTree(body);
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            // Erreur métier 4xx (ex. INVALID_MSISDN) : renvoyer le corps JSON au métier
+            // au lieu de déclencher le fallback « service indisponible »
+            String errBody = e.getResponseBodyAsString();
+            if (errBody != null && !errBody.isBlank() && errBody.trim().startsWith("{")) {
+                log.warn("[Monetbil] Réponse {} : {}", e.getStatusCode(), errBody);
+                return objectMapper.readTree(errBody);
+            }
+            throw e;
         }
-        return objectMapper.readTree(body);
     }
 
     // Appelé quand le circuit est ouvert ou que toutes les tentatives ont échoué

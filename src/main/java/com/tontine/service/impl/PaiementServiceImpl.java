@@ -219,12 +219,19 @@ public class PaiementServiceImpl implements PaiementService {
                             .statut(PaiementStatus.EN_ATTENTE)
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
-                            .instructions("Vérifiez votre téléphone MTN MoMo et entrez votre PIN pour confirmer.")
+                            .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
+                                    + "entrez votre code secret MoMo pour valider. "
+                                    + "Si rien ne s'affiche, composez *126# pour valider le paiement en attente.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
+                } else if ("INVALID_MSISDN".equalsIgnoreCase(mtnStatus)) {
+                    throw new BadRequestException("Le numéro " + request.getNumeroPaiement()
+                            + " n'est pas un numéro MTN Mobile Money valide. Vérifiez le numéro à débiter.");
                 } else {
                     log.warn("Monetbil placePayment MTN statut inattendu: {}", mtnStatus);
                 }
+            } catch (BadRequestException e) {
+                throw e;
             } catch (Exception e) {
                 log.error("Erreur Monetbil placePayment MTN: {}", e.getMessage());
             }
@@ -245,7 +252,9 @@ public class PaiementServiceImpl implements PaiementService {
                     .statut(PaiementStatus.EN_ATTENTE)
                     .numeroPaieur(request.getNumeroPaiement())
                     .urlPaiement(widgetUrl)
-                    .instructions("Confirmez le paiement sur votre téléphone MTN MoMo.")
+                    .instructions("La demande n'a pas pu être envoyée directement sur votre téléphone. "
+                            + "Ouvrez le lien de paiement pour finaliser, ou composez *126# "
+                            + "pour valider le paiement en attente.")
                     .createdAt(paiement.getCreatedAt())
                     .build();
         } else {
@@ -278,12 +287,19 @@ public class PaiementServiceImpl implements PaiementService {
                             .statut(PaiementStatus.EN_ATTENTE)
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
-                            .instructions("Vérifiez votre téléphone Orange Money et entrez votre PIN pour confirmer.")
+                            .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
+                                    + "entrez votre code secret Orange Money pour valider. "
+                                    + "Si rien ne s'affiche, composez #150*50# pour valider le paiement en attente.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
+                } else if ("INVALID_MSISDN".equalsIgnoreCase(orangeStatus)) {
+                    throw new BadRequestException("Le numéro " + request.getNumeroPaiement()
+                            + " n'est pas un numéro Orange Money valide. Vérifiez le numéro à débiter.");
                 } else {
                     log.warn("Monetbil placePayment Orange statut inattendu: {}", orangeStatus);
                 }
+            } catch (BadRequestException e) {
+                throw e;
             } catch (Exception e) {
                 log.error("Erreur Monetbil placePayment Orange: {}", e.getMessage());
             }
@@ -305,7 +321,9 @@ public class PaiementServiceImpl implements PaiementService {
                     .statut(PaiementStatus.EN_ATTENTE)
                     .numeroPaieur(request.getNumeroPaiement())
                     .urlPaiement(widgetUrl)
-                    .instructions("Confirmez le paiement via Orange Money.")
+                    .instructions("La demande n'a pas pu être envoyée directement sur votre téléphone. "
+                            + "Ouvrez le lien de paiement pour finaliser, ou composez #150*50# "
+                            + "pour valider le paiement en attente.")
                     .createdAt(paiement.getCreatedAt())
                     .build();
         }
@@ -450,9 +468,15 @@ public class PaiementServiceImpl implements PaiementService {
                         .payePourCompte(true)
                         .createdAt(paiement.getCreatedAt())
                         .build();
+            } else if ("INVALID_MSISDN".equalsIgnoreCase(pushStatus)) {
+                throw new BadRequestException("Le numéro " + request.getNumeroPaiement()
+                        + " n'est pas un numéro Mobile Money valide pour l'opérateur choisi. "
+                        + "Vérifiez le numéro à débiter.");
             } else {
                 log.warn("Monetbil placePayment espèces statut inattendu: {}", pushStatus);
             }
+        } catch (BadRequestException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Erreur Monetbil placePayment espèces: {}", e.getMessage());
         }

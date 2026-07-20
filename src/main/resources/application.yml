@@ -111,22 +111,6 @@ mobile-money:
     cancel-url:    ${ORANGE_CANCEL_URL:}
     notif-url:     ${ORANGE_NOTIF_URL:}
 
-# ── SMS ────────────────────────────────────────────────────────────────────────
-sms:
-  provider: ${SMS_PROVIDER:console}
-
-africastalking:
-  api-key:   ${AT_API_KEY:}
-  username:  ${AT_USERNAME:sandbox}
-  sender-id: ${AT_SENDER_ID:AdasheCash}
-
-twilio:
-  account-sid: ${TWILIO_ACCOUNT_SID:}
-  auth-token:  ${TWILIO_AUTH_TOKEN:}
-  api-key:     ${TWILIO_API_KEY:}
-  api-secret:  ${TWILIO_API_SECRET:}
-  from-number: ${TWILIO_FROM_NUMBER:}
-
 # ── Resilience4j ───────────────────────────────────────────────────────────────
 resilience4j:
   circuitbreaker:

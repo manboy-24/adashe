@@ -15,7 +15,6 @@ import com.tontine.service.*;
 import com.tontine.service.AuditService;
 import com.tontine.service.EmailAsyncService;
 import com.tontine.service.PushAsyncService;
-import com.tontine.service.SmsAsyncService;
 import com.tontine.util.OtpUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +36,6 @@ public class PinAuthServiceImpl implements PinAuthService {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final NotificationService notifService;
-    private final SmsAsyncService smsAsyncService;
     private final EmailAsyncService emailAsyncService;
     private final PushAsyncService pushAsyncService;
     private final AuthServiceImpl authHelper;
@@ -103,10 +101,22 @@ public class PinAuthServiceImpl implements PinAuthService {
                 repo.save(u);
                 auditService.log(u.getId(), u.getTelephone(), "CONNEXION_PIN", false,
                         "Compte bloqué après " + tentatives + " tentatives");
-                smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                        "Adashe - Sécurité : votre compte a été bloqué " + blocageMinutes
-                        + " min après " + tentatives + " tentatives incorrectes. "
-                        + "Si ce n'était pas vous, réinitialisez votre PIN immédiatement.");
+                // Alerte sécurité : email + push FCM (le canal SMS n'est plus utilisé)
+                if (u.getEmail() != null && !u.getEmail().isBlank()) {
+                    emailAsyncService.envoyerEmailAsync(u.getEmail(),
+                            "Sécurité Adashe — compte temporairement bloqué",
+                            "Bonjour " + u.getPrenom() + ",\n\n"
+                            + "Votre compte a été bloqué " + blocageMinutes + " minutes après "
+                            + tentatives + " tentatives de PIN incorrectes.\n"
+                            + "Si ce n'était pas vous, réinitialisez votre PIN immédiatement.\n\n"
+                            + "— L'équipe Adashe");
+                }
+                sessionRepository.findByUtilisateurIdAndActiveTrue(u.getId()).stream()
+                        .filter(s -> s.getFcmToken() != null && !s.getFcmToken().isBlank())
+                        .forEach(s -> pushAsyncService.envoyerPushAsync(s.getFcmToken(),
+                                "Compte temporairement bloqué",
+                                "Trop de tentatives de PIN incorrectes. Si ce n'était pas vous, réinitialisez votre PIN.",
+                                "SECURITE", null));
                 throw new UnauthorizedException(
                     maxTentatives + " tentatives échouées. Compte bloqué " + blocageMinutes
                     + " min. Utilisez 'Oublié mon PIN' pour réinitialiser.");
@@ -134,7 +144,14 @@ public class PinAuthServiceImpl implements PinAuthService {
                         .findByUtilisateurIdAndActiveTrue(u.getId());
 
                 if (!sessionsActives.isEmpty()) {
-                    // Appareil inconnu + sessions existantes → OTP requis
+                    // Appareil inconnu + sessions existantes → OTP requis.
+                    // L'OTP part par email uniquement (plus de SMS) : sans email,
+                    // orienter vers « PIN oublié » qui vérifie le numéro via Firebase.
+                    if (u.getEmail() == null || u.getEmail().isBlank()) {
+                        throw new BadRequestException(
+                                "Aucun email associé à ce compte. Utilisez « PIN oublié » "
+                                + "pour vous connecter sur ce nouvel appareil.");
+                    }
                     String otp = OtpUtil.generer(6);
                     u.setOtpCode(encoder.encode(otp));
                     u.setOtpExpiration(LocalDateTime.now().plusMinutes(otpExpiration));
@@ -151,25 +168,16 @@ public class PinAuthServiceImpl implements PinAuthService {
                                     "SECURITE",
                                     null));
 
-                    String destination;
-                    boolean viaEmail = u.getEmail() != null && !u.getEmail().isBlank();
-                    if (viaEmail) {
-                        notifService.envoyerEmail(u.getEmail(),
-                                "Adashe — Connexion sur un nouvel appareil",
-                                "Bonjour " + u.getPrenom() + ",\n\n"
-                                + "Une tentative de connexion a été détectée depuis un nouvel appareil"
-                                + (deviceName != null ? " (" + deviceName + ")" : "") + ".\n\n"
-                                + "Code de confirmation : " + otp + "\n"
-                                + "Valable " + otpExpiration + " minutes.\n\n"
-                                + "Si ce n'est pas vous, changez votre PIN immédiatement.\n\n"
-                                + "— L'équipe Adashe");
-                        destination = masquerEmail(u.getEmail());
-                    } else {
-                        smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                                "Adashe - Code appareil : " + otp + ". Valable " + otpExpiration
-                                + " min. Si ce n'est pas vous, changez votre PIN.");
-                        destination = masquerTelephone(u.getTelephone());
-                    }
+                    notifService.envoyerEmail(u.getEmail(),
+                            "Adashe — Connexion sur un nouvel appareil",
+                            "Bonjour " + u.getPrenom() + ",\n\n"
+                            + "Une tentative de connexion a été détectée depuis un nouvel appareil"
+                            + (deviceName != null ? " (" + deviceName + ")" : "") + ".\n\n"
+                            + "Code de confirmation : " + otp + "\n"
+                            + "Valable " + otpExpiration + " minutes.\n\n"
+                            + "Si ce n'est pas vous, changez votre PIN immédiatement.\n\n"
+                            + "— L'équipe Adashe");
+                    String destination = masquerEmail(u.getEmail());
 
                     log.info("Nouvel appareil détecté userId={} deviceId={}", u.getId(), deviceId);
                     auditService.log(u.getId(), u.getTelephone(), "NOUVEL_APPAREIL", false,

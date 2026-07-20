@@ -16,7 +16,6 @@ import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.impl.AuthServiceImpl;
 import com.tontine.service.impl.PinAuthServiceImpl;
-import com.tontine.service.SmsAsyncService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,10 +41,11 @@ class PinAuthServiceTest {
     @Mock private JwtService jwtService;
     @Mock private UserDetailsService userDetailsService;
     @Mock private NotificationService notifService;
-    @Mock private SmsAsyncService smsAsyncService;
     @Mock private AuthServiceImpl authHelper;
     @Mock private com.tontine.service.AuditService auditService;
     @Mock private com.tontine.service.EmailAsyncService emailAsyncService;
+    @Mock private com.tontine.repository.SessionRepository sessionRepository;
+    @Mock private com.tontine.service.PushAsyncService pushAsyncService;
 
     @InjectMocks
     private PinAuthServiceImpl service;

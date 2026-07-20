@@ -5,7 +5,6 @@ import com.tontine.enums.NotificationType;
 import com.tontine.enums.PaiementStatus;
 import com.tontine.repository.*;
 import com.tontine.service.NotificationService;
-import com.tontine.service.SmsAsyncService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -29,7 +28,6 @@ public class RappelCotisationScheduler {
     private final TirageRepository        tirageRepository;
     private final NotificationService     notificationService;
     private final NotificationRepository  notificationRepository;
-    private final SmsAsyncService         smsAsyncService;
     private final com.tontine.service.ScoreFiabiliteService scoreFiabiliteService;
     private final ScoreFiabiliteRepository scoreFiabiliteRepository;
 
@@ -54,7 +52,6 @@ public class RappelCotisationScheduler {
                             + tontine.getNom() + ".";
                     notificationService.creerNotification(m.getUtilisateur(), tontine,
                             "Cotisation dans 3 jours", msg, NotificationType.RAPPEL_COTISATION);
-                    smsAsyncService.envoyerSmsAsync(m.getUtilisateur().getTelephone(), msg);
                 });
             log.info("[Scheduler] Rappels J-3 pour tontine: {}", tontine.getNom());
         }
@@ -80,7 +77,6 @@ public class RappelCotisationScheduler {
                             + ". Payez maintenant via MTN MoMo ou Orange Money.";
                     notificationService.creerNotification(m.getUtilisateur(), tontine,
                             "Cotisez aujourd'hui !", msg, NotificationType.RAPPEL_COTISATION);
-                    smsAsyncService.envoyerSmsAsync(m.getUtilisateur().getTelephone(), msg);
                 }).count();
 
             if (nonPayers > 0)
@@ -113,7 +109,6 @@ public class RappelCotisationScheduler {
                             + "Montant : " + tontine.getMontantContribution() + " " + tontine.getDevise() + ".";
                     notificationService.creerNotification(m.getUtilisateur(), tontine,
                             "Cotisation bientôt en retard", msg, NotificationType.RAPPEL_COTISATION);
-                    smsAsyncService.envoyerSmsAsync(m.getUtilisateur().getTelephone(), msg);
                 });
             log.info("[Scheduler] Alertes 2/3 cycle pour tontine: {}", tontine.getNom());
         }
@@ -231,7 +226,6 @@ public class RappelCotisationScheduler {
                     notificationService.creerNotification(m.getUtilisateur(), tontine,
                             "⏰ Rappel important — cotisation attendue", msg,
                             NotificationType.SCORE_CRITIQUE);
-                    smsAsyncService.envoyerSmsAsync(m.getUtilisateur().getTelephone(), msg);
                 });
             log.info("[Scheduler] Rappels renforcés (score FAIBLE) pour tontine: {}", tontine.getNom());
         }

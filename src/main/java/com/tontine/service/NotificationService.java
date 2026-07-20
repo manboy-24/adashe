@@ -22,7 +22,6 @@ public interface NotificationService {
     void envoyerPushNotification(String fcmToken, String titre, String corps,
                                  String type, Long tontineId);
 
-    void envoyerSms(String telephone, String message);
 
     void envoyerEmail(String email, String sujet, String corps);
 

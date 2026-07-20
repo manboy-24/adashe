@@ -5,7 +5,6 @@ import com.tontine.enums.*;
 import com.tontine.enums.FrequenceType;
 import com.tontine.repository.*;
 import com.tontine.service.NotificationService;
-import com.tontine.service.SmsAsyncService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,7 +30,6 @@ class RappelCotisationSchedulerTest {
     @Mock private TirageRepository        tirageRepository;
     @Mock private NotificationService     notificationService;
     @Mock private NotificationRepository  notificationRepository;
-    @Mock private SmsAsyncService         smsAsyncService;
 
     @InjectMocks
     private RappelCotisationScheduler scheduler;
@@ -76,7 +74,6 @@ class RappelCotisationSchedulerTest {
 
         verify(notificationService).creerNotification(
                 eq(utilisateur), eq(tontine), any(), contains("3 jours"), eq(NotificationType.RAPPEL_COTISATION));
-        verify(smsAsyncService).envoyerSmsAsync(eq("677000002"), contains("3 jours"));
     }
 
     @Test
@@ -90,7 +87,6 @@ class RappelCotisationSchedulerTest {
         scheduler.rappelTroisJoursAvant();
 
         verify(notificationService, never()).creerNotification(any(), any(), any(), any(), any());
-        verify(smsAsyncService, never()).envoyerSmsAsync(any(), any());
     }
 
     @Test
@@ -99,7 +95,7 @@ class RappelCotisationSchedulerTest {
 
         scheduler.rappelTroisJoursAvant();
 
-        verifyNoInteractions(membreRepository, notificationService, smsAsyncService);
+        verifyNoInteractions(membreRepository, notificationService);
     }
 
     // ── rappelJourJ ───────────────────────────────────────────────────────────
@@ -138,7 +134,7 @@ class RappelCotisationSchedulerTest {
 
         scheduler.alerteDeuxTiersDuCycle();
 
-        verifyNoInteractions(membreRepository, notificationService, smsAsyncService);
+        verifyNoInteractions(membreRepository, notificationService);
     }
 
     @Test

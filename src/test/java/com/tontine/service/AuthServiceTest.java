@@ -10,7 +10,6 @@ import com.tontine.exception.ResourceNotFoundException;
 import com.tontine.repository.UtilisateurRepository;
 import com.tontine.security.JwtService;
 import com.tontine.service.EmailAsyncService;
-import com.tontine.service.SmsAsyncService;
 import com.tontine.service.impl.AuthServiceImpl;
 import com.tontine.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +37,6 @@ class AuthServiceTest {
     @Mock private JwtService jwtService;
     @Mock private UserDetailsService userDetailsService;
     @Mock private NotificationService notificationService;
-    @Mock private SmsAsyncService smsAsyncService;
     @Mock private EmailAsyncService emailAsyncService;
     @Mock private com.tontine.repository.SessionRepository sessionRepository;
     @Mock private com.tontine.service.AuditService auditService;
@@ -91,7 +89,6 @@ class AuthServiceTest {
 
         assertThrows(BadRequestException.class, () -> service.inscrire(req));
         verify(utilisateurRepository, never()).save(any());
-        verify(smsAsyncService, never()).envoyerSmsAsync(any(), any());
     }
 
     @Test
@@ -195,7 +192,7 @@ class AuthServiceTest {
     @Test
     void renvoyerOtp_succes_genere_nouveau_code() {
         Utilisateur u = Utilisateur.builder()
-                .id(1L).telephone("699000001")
+                .id(1L).telephone("699000001").email("paul@test.com")
                 .otpExpiration(null) // aucun code actif
                 .build();
 
@@ -206,7 +203,7 @@ class AuthServiceTest {
         ApiResponse<String> result = service.renvoyerOtp("699000001");
 
         assertTrue(result.isSuccess());
-        verify(smsAsyncService).envoyerSmsAsync(eq("699000001"), anyString());
+        verify(emailAsyncService).envoyerEmailAsync(eq("paul@test.com"), anyString(), anyString());
         assertEquals("newHashedOtp", u.getOtpCode());
     }
 
@@ -221,7 +218,7 @@ class AuthServiceTest {
         when(utilisateurRepository.findByTelephone("699000001")).thenReturn(Optional.of(u));
 
         assertThrows(BadRequestException.class, () -> service.renvoyerOtp("699000001"));
-        verify(smsAsyncService, never()).envoyerSmsAsync(any(), any());
+        verify(emailAsyncService, never()).envoyerEmailAsync(any(), any(), any());
     }
 
     // ── deconnecter ───────────────────────────────────────────────────────────

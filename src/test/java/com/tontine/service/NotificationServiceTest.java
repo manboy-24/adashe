@@ -32,7 +32,6 @@ class NotificationServiceTest {
     @Mock private NotificationRepository notificationRepository;
     @Mock private UtilisateurRepository  utilisateurRepository;
     @Mock private JavaMailSender         mailSender;
-    @Mock private RestTemplate           restTemplate;
     @Mock private PushAsyncService       pushAsyncService;
 
     @InjectMocks
@@ -43,15 +42,6 @@ class NotificationServiceTest {
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(notificationService, "smsProvider",  "console");
-        ReflectionTestUtils.setField(notificationService, "atApiKey",     "");
-        ReflectionTestUtils.setField(notificationService, "atUsername",   "sandbox");
-        ReflectionTestUtils.setField(notificationService, "atSenderId",   "Adashe");
-        ReflectionTestUtils.setField(notificationService, "twilioAccountSid", "");
-        ReflectionTestUtils.setField(notificationService, "twilioAuthToken",  "");
-        ReflectionTestUtils.setField(notificationService, "twilioApiKey",     "");
-        ReflectionTestUtils.setField(notificationService, "twilioApiSecret",  "");
-        ReflectionTestUtils.setField(notificationService, "twilioFromNumber", "");
 
         utilisateur = Utilisateur.builder()
                 .id(1L).nom("Kamga").prenom("Paul").telephone("699000001").build();
@@ -103,35 +93,6 @@ class NotificationServiceTest {
 
         verify(notificationRepository).save(argThat(n ->
                 n.getReferenceId() == null && n.getReferenceType() == null));
-    }
-
-    // ── envoyerSms ────────────────────────────────────────────────────────────
-
-    @Test
-    void envoyerSms_console_ne_contacte_pas_api_externe() {
-        notificationService.envoyerSms("699000001", "Test SMS");
-
-        verifyNoInteractions(restTemplate);
-    }
-
-    @Test
-    void envoyerSms_africastalking_sans_cle_log_et_ignore() {
-        ReflectionTestUtils.setField(notificationService, "smsProvider", "africastalking");
-        ReflectionTestUtils.setField(notificationService, "atApiKey", "");
-
-        notificationService.envoyerSms("699000001", "Test");
-
-        verifyNoInteractions(restTemplate);
-    }
-
-    @Test
-    void envoyerSms_twilio_sans_account_sid_log_et_ignore() {
-        ReflectionTestUtils.setField(notificationService, "smsProvider", "twilio");
-        ReflectionTestUtils.setField(notificationService, "twilioAccountSid", "");
-
-        notificationService.envoyerSms("699000001", "Test");
-
-        verifyNoInteractions(restTemplate);
     }
 
     // ── envoyerEmail ──────────────────────────────────────────────────────────

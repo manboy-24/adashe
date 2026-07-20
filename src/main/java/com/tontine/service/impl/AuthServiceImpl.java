@@ -13,7 +13,6 @@ import com.tontine.service.AuditService;
 import com.tontine.service.AuthService;
 import com.tontine.service.EmailAsyncService;
 import com.tontine.service.NotificationService;
-import com.tontine.service.SmsAsyncService;
 import com.tontine.util.ContratAdminVersion;
 import com.tontine.util.OtpUtil;
 import com.tontine.util.SecurityUtil;
@@ -45,7 +44,6 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final NotificationService notificationService;
-    private final SmsAsyncService smsAsyncService;
     private final EmailAsyncService emailAsyncService;
     private final AuditService auditService;
     private final RestTemplate restTemplate;
@@ -150,20 +148,19 @@ public class AuthServiceImpl implements AuthService {
         u.setOtpExpiration(LocalDateTime.now().plusMinutes(otpExpiration));
         utilisateurRepository.save(u);
 
-        boolean viaEmail = u.getEmail() != null && !u.getEmail().isBlank();
-        if (viaEmail) {
-            emailAsyncService.envoyerEmailAsync(
-                u.getEmail(),
-                "Adashe — Nouveau code de vérification",
-                corpsEmailOtp(otp, otpExpiration)
-            );
-        } else {
-            smsAsyncService.envoyerSmsAsync(telephone,
-                "Adashe - Nouveau code : " + otp + ". Valable " + otpExpiration + " min.");
+        // L'OTP part par email uniquement (plus de SMS) — l'email est obligatoire
+        // à l'inscription ; les comptes sans email passent par Firebase Phone Auth
+        if (u.getEmail() == null || u.getEmail().isBlank()) {
+            throw new BadRequestException(
+                    "Aucun email associé à ce compte. Utilisez la vérification par téléphone (Firebase).");
         }
+        emailAsyncService.envoyerEmailAsync(
+            u.getEmail(),
+            "Adashe — Nouveau code de vérification",
+            corpsEmailOtp(otp, otpExpiration)
+        );
 
-        String destination = viaEmail ? masquerEmail(u.getEmail()) : masquerTelephone(telephone);
-        return ApiResponse.success(null, "Nouveau code envoyé à " + destination);
+        return ApiResponse.success(null, "Nouveau code envoyé à " + masquerEmail(u.getEmail()));
     }
 
     // ── Refresh token JWT ───────────────────────────────────────────────────
@@ -194,10 +191,8 @@ public class AuthServiceImpl implements AuthService {
             u.setRefreshToken(null); u.setRefreshTokenExpiration(null); u.setPreviousRefreshTokenHash(null);
             utilisateurRepository.save(u);
             auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Toutes sessions révoquées");
-            smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "Adashe - Sécurité : activité suspecte détectée. "
-                    + "Toutes vos sessions ont été déconnectées. "
-                    + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
+            // Sessions coupées → le push n'arriverait pas ; l'email est le canal fiable ici
+            envoyerAlerteActiviteSuspecte(u);
         });
 
         // ── 3. Fallback legacy : token stocké sur l'utilisateur (sans deviceId) ──
@@ -222,13 +217,21 @@ public class AuthServiceImpl implements AuthService {
             utilisateurRepository.save(u);
             sessionRepository.deactivateAll(u.getId());
             auditService.log(u.getId(), u.getTelephone(), "TOKEN_REPLAY", false, "Legacy — sessions révoquées");
-            smsAsyncService.envoyerSmsAsync(u.getTelephone(),
-                    "Adashe - Sécurité : activité suspecte détectée. "
-                    + "Toutes vos sessions ont été déconnectées. "
-                    + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.");
+            envoyerAlerteActiviteSuspecte(u);
         });
 
         throw new UnauthorizedException("Session invalide. Veuillez vous reconnecter.");
+    }
+
+    private void envoyerAlerteActiviteSuspecte(Utilisateur u) {
+        if (u.getEmail() == null || u.getEmail().isBlank()) return;
+        emailAsyncService.envoyerEmailAsync(u.getEmail(),
+                "Sécurité Adashe — activité suspecte détectée",
+                "Bonjour " + u.getPrenom() + ",\n\n"
+                + "Une activité suspecte a été détectée sur votre compte. "
+                + "Toutes vos sessions ont été déconnectées par précaution.\n"
+                + "Reconnectez-vous et changez votre PIN si ce n'était pas vous.\n\n"
+                + "— L'équipe Adashe");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

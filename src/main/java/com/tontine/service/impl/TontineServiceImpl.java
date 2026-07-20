@@ -401,8 +401,39 @@ public class TontineServiceImpl implements TontineService {
         tontine.setNumeroOrangeMomo(request.getNumeroOrangeMomo());
 
         tontineRepository.save(tontine);
+
+        // Sync vers le portefeuille du créateur (évite la double saisie côté profil)
+        synchroniserNumeroVersWallet(createurId,
+                com.tontine.enums.PaiementMode.MTN_MOBILE_MONEY, request.getNumeroMtnMomo());
+        synchroniserNumeroVersWallet(createurId,
+                com.tontine.enums.PaiementMode.ORANGE_MONEY, request.getNumeroOrangeMomo());
+
         log.info("Tontine {} configurée (commission={}%) par userId={}", tontineId, request.getCommissionPourcent(), createurId);
         return toResponse(tontine, createurId);
+    }
+
+    // Remplit le compte wallet de l'opérateur uniquement s'il n'a pas encore de numéro —
+    // on n'écrase jamais un numéro personnel défini dans le profil
+    private void synchroniserNumeroVersWallet(Long userId,
+                                              com.tontine.enums.PaiementMode operateur,
+                                              String numero) {
+        if (numero == null || numero.isBlank()) return;
+        CompteWallet compte = compteWalletRepository
+                .findByUtilisateurIdAndOperateur(userId, operateur)
+                .orElse(null);
+        if (compte == null) {
+            Utilisateur utilisateur = utilisateurRepository.findById(userId).orElse(null);
+            if (utilisateur == null) return;
+            compte = CompteWallet.builder()
+                    .utilisateur(utilisateur)
+                    .operateur(operateur)
+                    .build();
+        } else if (compte.getTelephone() != null && !compte.getTelephone().isBlank()) {
+            return;
+        }
+        compte.setTelephone(numero);
+        compte.setActif(true);
+        compteWalletRepository.save(compte);
     }
 
     @Override

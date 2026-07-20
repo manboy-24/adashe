@@ -416,8 +416,10 @@ public class PinAuthServiceImpl implements PinAuthService {
             throw new BadRequestException("Aucun PIN défini — configurez un PIN dans votre profil");
         if (u.getPinBloqueJusquA() != null && LocalDateTime.now().isBefore(u.getPinBloqueJusquA()))
             throw new BadRequestException("PIN temporairement bloqué — réessayez dans quelques minutes");
+        // 400 et non 401 : sur cet endpoint, 401 doit signifier uniquement "JWT expiré"
+        // pour que l'app puisse distinguer PIN erroné et session expirée
         if (!encoder.matches(pin, u.getCodePin()))
-            throw new UnauthorizedException("PIN incorrect");
+            throw new BadRequestException("PIN incorrect");
         return ApiResponse.success(null, "PIN valide");
     }
 

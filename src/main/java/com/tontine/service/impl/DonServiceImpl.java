@@ -28,6 +28,7 @@ import org.springframework.util.MultiValueMap;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
@@ -55,6 +56,9 @@ public class DonServiceImpl implements DonService {
 
     @Value("${monetbil.don-notify-url:${monetbil.notify-url}}")
     private String donNotifyUrl;
+
+    @Value("${monetbil.return-url}")
+    private String monetbilReturnUrl;
 
 
     // ── Initier un don ────────────────────────────────────────────────────────
@@ -130,21 +134,25 @@ public class DonServiceImpl implements DonService {
                         ? "MTN Mobile Money" : "Orange Money") + " valide. Vérifiez le numéro à débiter.");
             }
 
-            log.warn("Monetbil placePayment don statut inattendu : {}", status);
-            don.setStatut(PaiementStatus.ANNULE);
-            don.setMessageOperateur("Statut inattendu : " + status);
-            donRepository.save(don);
-            throw new BadRequestException("La demande de don n'a pas pu être envoyée. Réessayez.");
+            log.warn("Monetbil placePayment don statut inattendu : {} — repli sur le lien de paiement", status);
 
         } catch (BadRequestException e) {
             throw e;
         } catch (Exception e) {
-            don.setStatut(PaiementStatus.ANNULE);
-            don.setMessageOperateur(e.getMessage());
-            donRepository.save(don);
-            log.error("Erreur initiation don {} : {}", reference, e.getMessage());
-            throw new BadRequestException("Impossible d'initier le paiement : " + e.getMessage());
+            // placePayment indisponible (ex. IP serveur défiée par le WAF Monetbil) → repli lien
+            log.warn("[Don] placePayment indisponible ({}) — repli sur le lien de paiement", e.getMessage());
         }
+
+        // Repli : lien de paiement widget. Le donateur finalise depuis SON navigateur
+        // (son IP n'est pas bloquée, contrairement à celle du serveur). Le don reste
+        // EN_ATTENTE ; le webhook Monetbil le confirmera après paiement.
+        String widgetUrl = buildWidgetDonUrl(montant, phone, reference, utilisateurId);
+        don.setGatewayPaymentUrl(widgetUrl);
+        don = donRepository.save(don);
+        log.info("Don {} — lien de paiement fourni ({} FCFA)", reference, montant.longValue());
+        return toResponse(don,
+                "Ouvrez le lien de paiement pour finaliser votre don en toute sécurité. "
+                + "Dès la confirmation, vous recevrez votre remerciement.");
     }
 
     // Normalisation numéro camerounais → 237XXXXXXXXX (identique au flux paiement).
@@ -153,6 +161,20 @@ public class DonServiceImpl implements DonService {
         if (phone.startsWith("00237")) phone = phone.substring(5);
         else if (phone.startsWith("237") && phone.length() > 9) phone = phone.substring(3);
         return "237" + phone;
+    }
+
+    // Lien de paiement Monetbil (widget) — ouvert dans le navigateur du donateur.
+    private String buildWidgetDonUrl(BigDecimal montant, String phone, String reference, Long userId) {
+        return "https://www.monetbil.com/widget/v2.1/" + monetbilServiceKey
+                + "?amount="      + montant.longValue()
+                + "&phone="       + phone
+                + "&locale=fr"
+                + "&item_ref="    + URLEncoder.encode(reference, StandardCharsets.UTF_8)
+                + "&payment_ref=" + URLEncoder.encode(reference, StandardCharsets.UTF_8)
+                + "&user1=don"
+                + "&user2="       + URLEncoder.encode("utilisateur_" + userId, StandardCharsets.UTF_8)
+                + "&notify_url="  + URLEncoder.encode(donNotifyUrl, StandardCharsets.UTF_8)
+                + "&return_url="  + URLEncoder.encode(monetbilReturnUrl, StandardCharsets.UTF_8);
     }
 
     // ── Statut (polling app : attente de confirmation du débit) ────────────────

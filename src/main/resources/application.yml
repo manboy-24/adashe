@@ -86,10 +86,13 @@ monetbil:
   frais-fixe: 4
 
 # ── Compte développeur (destinataire des amendes) ──────────────────────────────
+# Numéros définis UNIQUEMENT via variables d'environnement (Railway) — jamais en clair
+# dans le dépôt. Absence de valeur par défaut : le reversement des amendes échoue
+# proprement si la variable n'est pas configurée.
 developpeur:
   compte:
-    mtn-momo:     ${DEVELOPPEUR_MTN_MOMO:681951580}
-    orange-money: ${DEVELOPPEUR_ORANGE_MONEY:692966294}
+    mtn-momo:     ${DEVELOPPEUR_MTN_MOMO:}
+    orange-money: ${DEVELOPPEUR_ORANGE_MONEY:}
 
 # ── Mobile Money ───────────────────────────────────────────────────────────────
 mobile-money:

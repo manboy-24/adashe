@@ -11,9 +11,9 @@ import org.springframework.context.annotation.Configuration;
 @Setter
 public class DeveloppeurCompteConfig {
 
-    /** Numéro MTN MoMo du développeur — modifiable via DEVELOPPEUR_MTN_MOMO ou application.yml */
-    private String mtnMomo = "681951580";
+    /** Numéro MTN MoMo du développeur — défini via la variable d'env DEVELOPPEUR_MTN_MOMO (Railway). */
+    private String mtnMomo = "";
 
-    /** Numéro Orange Money du développeur — modifiable via DEVELOPPEUR_ORANGE_MONEY ou application.yml */
-    private String orangeMoney = "692966294";
+    /** Numéro Orange Money du développeur — défini via la variable d'env DEVELOPPEUR_ORANGE_MONEY (Railway). */
+    private String orangeMoney = "";
 }

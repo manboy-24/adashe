@@ -637,6 +637,14 @@ public class TontineServiceImpl implements TontineService {
             throw new BadRequestException("Un tirage a déjà été effectué pour ce cycle");
         }
 
+        // Le tirage ne peut être lancé qu'à la fin du cycle (à partir du dernier jour)
+        if (tontine.getDateProchainCycle() != null
+                && LocalDate.now().isBefore(tontine.getDateProchainCycle())) {
+            throw new BadRequestException("Le tirage ne pourra être lancé qu'à la fin du cycle, le "
+                    + tontine.getDateProchainCycle().format(
+                            java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        }
+
         // Vérifier que tous les membres non-bloqués ont cotisé pour ce cycle
         List<MembreTontine> membresActifs = membreRepository.findByTontineIdAndActifTrue(tontineId)
                 .stream()
@@ -1507,12 +1515,12 @@ public class TontineServiceImpl implements TontineService {
     @Transactional
     public void modifierOrdrePassage(Long tontineId, OrdrePassageRequest request, Long adminId) {
         Tontine tontine = tontineRepository.findById(tontineId)
-                .orElseThrow(() -> new RuntimeException("Tontine introuvable"));
+                .orElseThrow(() -> new ResourceNotFoundException("Tontine introuvable"));
 
         verifierCreateur(tontine, adminId);
 
         if (tontine.getTypeTirage() != TirageType.ROTATIF) {
-            throw new RuntimeException("L'ordre de passage ne s'applique qu'aux tontines rotatives");
+            throw new BadRequestException("L'ordre de passage ne s'applique qu'aux tontines rotatives");
         }
 
         List<MembreTontine> membres = membreRepository.findByTontineId(tontineId);
@@ -1537,6 +1545,6 @@ public class TontineServiceImpl implements TontineService {
         boolean estCreateur = tontine.getMembres().stream()
                 .anyMatch(m -> m.getUtilisateur().getId().equals(userId)
                         && m.getRoleMembreTontine() == MembreTontineRole.CREATEUR);
-        if (!estCreateur) throw new RuntimeException("Action réservée au créateur");
+        if (!estCreateur) throw new ForbiddenException("Action réservée au créateur");
     }
 }

@@ -55,31 +55,25 @@ public class DonServiceImpl implements DonService {
     @Value("${monetbil.don-notify-url:${monetbil.notify-url}}")
     private String donNotifyUrl;
 
-    @Value("${monetbil.return-url}")
-    private String monetbilReturnUrl;
-
-    // Numéros de réception des dons (côté backend — jamais exposés au client)
-    @Value("${developpeur.compte.mtn-momo:681951580}")
-    private String compteReceptionMtn;
-
-    @Value("${developpeur.compte.orange-money:692966294}")
-    private String compteReceptionOrange;
 
     // ── Initier un don ────────────────────────────────────────────────────────
 
     @Override
     @Transactional
     public DonResponse initierDon(DonRequest request, Long utilisateurId) {
-        if (request.getOperateur() == PaiementMode.ESPECES) {
-            throw new BadRequestException("Les dons en espèces ne sont pas supportés.");
+        if (request.getOperateur() != PaiementMode.MTN_MOBILE_MONEY
+                && request.getOperateur() != PaiementMode.ORANGE_MONEY) {
+            throw new BadRequestException("Opérateur non supporté. Choisissez MTN_MOBILE_MONEY ou ORANGE_MONEY.");
         }
 
         Utilisateur utilisateur = utilisateurRepository.findById(utilisateurId)
                 .orElseThrow(() -> new BadRequestException("Utilisateur introuvable."));
 
         String reference = "DON-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
-        String numeroReception = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                ? compteReceptionMtn : compteReceptionOrange;
+
+        // Numéro du DONATEUR à débiter (et non un numéro de réception) — c'est sur ce
+        // téléphone que Monetbil pousse la fenêtre de confirmation USSD.
+        String phone = buildPhone(request.getNumeroPaiement());
 
         BigDecimal montant = BigDecimal.valueOf(request.getMontant());
 
@@ -93,30 +87,56 @@ public class DonServiceImpl implements DonService {
                 .operateur(request.getOperateur())
                 .statut(PaiementStatus.EN_ATTENTE)
                 .referenceTransaction(reference)
-                .numeroPaieur(numeroReception)
+                .numeroPaieur(request.getNumeroPaiement())
                 .tirage(tirage)
                 .build();
         don = donRepository.save(don);
 
+        String operator = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
+                ? "CM_MTNMOBILEMONEY" : "CM_ORANGEMONEY";
+
+        MultiValueMap<String, String> payload = new LinkedMultiValueMap<>();
+        payload.add("service",     monetbilServiceKey);
+        payload.add("amount",      String.valueOf(montant.longValue()));
+        payload.add("phonenumber", phone);
+        payload.add("operator",    operator);
+        payload.add("item_ref",    reference);
+        payload.add("notify_url",  donNotifyUrl);
+
         try {
-            MultiValueMap<String, String> payload = buildPayload(
-                    request.getOperateur(), numeroReception, montant, reference, utilisateurId);
+            com.fasterxml.jackson.databind.JsonNode response =
+                    monetbilGateway.callApi(monetbilApiUrl, payload);
 
-            com.fasterxml.jackson.databind.JsonNode response = monetbilGateway.callApi(monetbilApiUrl, payload);
+            String status    = response.path("status").asText("");
+            String paymentId = response.path("paymentId").asText(reference);
 
-            String widgetUrl  = response.path("widget_url").asText("");
-            String paymentRef = response.path("payment_ref").asText("");
+            if ("REQUEST_ACCEPTED".equals(status)) {
+                don.setGatewayTransactionId(paymentId);
+                don = donRepository.save(don);
+                String instructions = "Une fenêtre de confirmation s'affiche sur votre téléphone — "
+                        + "entrez votre code secret " + (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
+                        ? "MTN MoMo" : "Orange Money") + " pour valider votre don.";
+                log.info("Don {} push initié pour {} FCFA", reference, montant.longValue());
+                return toResponse(don, instructions);
+            }
 
-            don.setGatewayPaymentUrl(widgetUrl.isBlank() ? null : widgetUrl);
-            don.setGatewayTransactionId(paymentRef.isBlank() ? null : paymentRef);
-            don = donRepository.save(don);
+            if ("INVALID_MSISDN".equalsIgnoreCase(status)) {
+                don.setStatut(PaiementStatus.ANNULE);
+                don.setMessageOperateur("Numéro invalide : " + request.getNumeroPaiement());
+                donRepository.save(don);
+                throw new BadRequestException("Le numéro " + request.getNumeroPaiement()
+                        + " n'est pas un numéro " + (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
+                        ? "MTN Mobile Money" : "Orange Money") + " valide. Vérifiez le numéro à débiter.");
+            }
 
-            String instructions = request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                    ? "Confirmez le paiement sur votre téléphone MTN MoMo."
-                    : "Composez #150*50# sur votre téléphone Orange Money pour confirmer.";
+            log.warn("Monetbil placePayment don statut inattendu : {}", status);
+            don.setStatut(PaiementStatus.ANNULE);
+            don.setMessageOperateur("Statut inattendu : " + status);
+            donRepository.save(don);
+            throw new BadRequestException("La demande de don n'a pas pu être envoyée. Réessayez.");
 
-            return toResponse(don, instructions);
-
+        } catch (BadRequestException e) {
+            throw e;
         } catch (Exception e) {
             don.setStatut(PaiementStatus.ANNULE);
             don.setMessageOperateur(e.getMessage());
@@ -124,6 +144,14 @@ public class DonServiceImpl implements DonService {
             log.error("Erreur initiation don {} : {}", reference, e.getMessage());
             throw new BadRequestException("Impossible d'initier le paiement : " + e.getMessage());
         }
+    }
+
+    // Normalisation numéro camerounais → 237XXXXXXXXX (identique au flux paiement).
+    private String buildPhone(String numeroPaiement) {
+        String phone = numeroPaiement.replaceAll("[^0-9]", "");
+        if (phone.startsWith("00237")) phone = phone.substring(5);
+        else if (phone.startsWith("237") && phone.length() > 9) phone = phone.substring(3);
+        return "237" + phone;
     }
 
     // ── Callback Monetbil ─────────────────────────────────────────────────────
@@ -193,32 +221,6 @@ public class DonServiceImpl implements DonService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private MultiValueMap<String, String> buildPayload(
-            PaiementMode operateur,
-            String numero,
-            BigDecimal montant,
-            String reference,
-            Long utilisateurId) {
-
-        String operator = operateur == PaiementMode.MTN_MOBILE_MONEY ? "MTN_MOMO_CM" : "ORANGE_CM";
-        String phone    = numero.replaceAll("\\s+", "");
-        if (!phone.startsWith("237")) phone = "237" + phone;
-
-        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        params.add("service",    monetbilServiceKey);
-        params.add("amount",     String.valueOf(montant.longValue()));
-        params.add("phone",      phone);
-        params.add("msisdn",     phone);
-        params.add("operator",   operator);
-        params.add("locale",     "fr");
-        params.add("item_ref",   reference);
-        params.add("user1",      "don");
-        params.add("user2",      "utilisateur_" + utilisateurId);
-        params.add("notify_url", donNotifyUrl);
-        params.add("return_url", monetbilReturnUrl);
-        return params;
-    }
 
     private boolean verifierSignature(Map<String, String> payload, String sign) {
         if (sign == null || sign.isBlank()) return false;

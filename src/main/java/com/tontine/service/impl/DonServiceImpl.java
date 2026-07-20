@@ -3,6 +3,7 @@ package com.tontine.service.impl;
 import com.tontine.dto.request.DonRequest;
 import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.DonResponse;
+import com.tontine.dto.response.DonStatutResponse;
 import com.tontine.entity.Don;
 import com.tontine.entity.Tirage;
 import com.tontine.entity.Utilisateur;
@@ -152,6 +153,24 @@ public class DonServiceImpl implements DonService {
         if (phone.startsWith("00237")) phone = phone.substring(5);
         else if (phone.startsWith("237") && phone.length() > 9) phone = phone.substring(3);
         return "237" + phone;
+    }
+
+    // ── Statut (polling app : attente de confirmation du débit) ────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public DonStatutResponse getStatutDon(String reference, Long utilisateurId) {
+        Don don = donRepository.findByReferenceTransaction(reference)
+                .orElseThrow(() -> new BadRequestException("Don introuvable."));
+        if (!don.getUtilisateur().getId().equals(utilisateurId)) {
+            throw new BadRequestException("Ce don ne vous appartient pas.");
+        }
+        Utilisateur u = don.getUtilisateur();
+        return DonStatutResponse.builder()
+                .statut(don.getStatut())
+                .montant(don.getMontant())
+                .nomComplet((u.getPrenom() + " " + u.getNom()).trim())
+                .build();
     }
 
     // ── Callback Monetbil ─────────────────────────────────────────────────────

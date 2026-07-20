@@ -3,6 +3,7 @@ package com.tontine.controller;
 import com.tontine.dto.request.DonRequest;
 import com.tontine.dto.response.ApiResponse;
 import com.tontine.dto.response.DonResponse;
+import com.tontine.dto.response.DonStatutResponse;
 import com.tontine.service.DonService;
 import com.tontine.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -28,6 +29,12 @@ public class DonController {
     public ResponseEntity<DonResponse> initierDon(@Valid @RequestBody DonRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(donService.initierDon(request, securityUtil.getCurrentUserId()));
+    }
+
+    @GetMapping("/{reference}/statut")
+    @Operation(summary = "Statut d'un don (polling attente de confirmation du débit)")
+    public ResponseEntity<DonStatutResponse> statutDon(@PathVariable String reference) {
+        return ResponseEntity.ok(donService.getStatutDon(reference, securityUtil.getCurrentUserId()));
     }
 
     @PostMapping("/webhook/monetbil")

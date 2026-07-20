@@ -116,11 +116,18 @@ public class DonServiceImpl implements DonService {
             if ("REQUEST_ACCEPTED".equals(status)) {
                 don.setGatewayTransactionId(paymentId);
                 don = donRepository.save(don);
-                String instructions = "Une fenêtre de confirmation s'affiche sur votre téléphone — "
-                        + "entrez votre code secret " + (request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY
-                        ? "MTN MoMo" : "Orange Money") + " pour valider votre don.";
-                log.info("Don {} push initié pour {} FCFA", reference, montant.longValue());
-                return toResponse(don, instructions);
+                // Compte Monetbil en FLOW_PIN_USSD : le donateur doit composer le code USSD
+                // renvoyé (channel_ussd) puis saisir son code secret. Pas de push automatique.
+                String ussd  = response.path("channel_ussd").asText("");
+                String canal = response.path("channel_name").asText(
+                        request.getOperateur() == PaiementMode.MTN_MOBILE_MONEY ? "MTN Mobile Money" : "Orange Money");
+                String instructions = ussd.isBlank()
+                        ? "Une fenêtre de confirmation s'affiche sur votre téléphone — entrez votre code secret pour valider votre don."
+                        : "Composez " + ussd + " sur votre téléphone " + canal + ", puis entrez votre code secret pour valider votre don de "
+                                + montant.longValue() + " FCFA.";
+                log.info("Don {} initié ({} FCFA) — flow={} ussd={}", reference, montant.longValue(),
+                        response.path("flow").asText(""), ussd);
+                return toResponse(don, instructions, ussd.isBlank() ? null : ussd);
             }
 
             if ("INVALID_MSISDN".equalsIgnoreCase(status)) {
@@ -289,6 +296,10 @@ public class DonServiceImpl implements DonService {
     }
 
     private DonResponse toResponse(Don d, String instructions) {
+        return toResponse(d, instructions, null);
+    }
+
+    private DonResponse toResponse(Don d, String instructions, String codeUssd) {
         return DonResponse.builder()
                 .id(d.getId())
                 .referenceTransaction(d.getReferenceTransaction())
@@ -297,6 +308,7 @@ public class DonServiceImpl implements DonService {
                 .operateur(d.getOperateur())
                 .statut(d.getStatut())
                 .urlPaiement(d.getGatewayPaymentUrl())
+                .codeUssd(codeUssd)
                 .messageOperateur(d.getMessageOperateur())
                 .instructions(instructions)
                 .createdAt(d.getCreatedAt())

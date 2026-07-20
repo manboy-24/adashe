@@ -48,7 +48,6 @@ public class SecurityConfig {
             "/dons/webhook/**",
             "/actuator/health",
             "/actuator/info",
-            "/diagnostic/ip",       // diagnostic temporaire : IP sortante (à retirer)
             "/ws/**",              // JWT validé dans JwtHandshakeInterceptor, pas ici
             "/join/**",            // Page de redirection deep-link (liens WhatsApp/SMS)
             "/.well-known/**",     // Android App Links — assetlinks.json

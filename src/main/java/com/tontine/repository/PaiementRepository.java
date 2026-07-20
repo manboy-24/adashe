@@ -31,8 +31,14 @@ public interface PaiementRepository extends JpaRepository<Paiement, Long> {
     /** Vérifie qu'un paiement EN_ATTENTE n'existe pas déjà pour ce membre (anti-doublon). */
     boolean existsByMembreIdAndStatut(Long membreId, PaiementStatus statut);
 
-    /** Paiements EN_ATTENTE créés avant une date limite (pour expiration automatique). */
-    List<Paiement> findByStatutAndCreatedAtBefore(PaiementStatus statut, LocalDateTime limit);
+    /**
+     * Paiements EN_ATTENTE créés avant une date limite (pour expiration automatique).
+     * JOIN FETCH membre/utilisateur/tontine : annulerSiEnAttente (clearAutomatically)
+     * détache les entités — les relations doivent être initialisées avant l'UPDATE.
+     */
+    @Query("SELECT p FROM Paiement p JOIN FETCH p.membre m JOIN FETCH m.utilisateur JOIN FETCH m.tontine " +
+           "WHERE p.statut = :statut AND p.createdAt < :limit")
+    List<Paiement> findByStatutAndCreatedAtBefore(@Param("statut") PaiementStatus statut, @Param("limit") LocalDateTime limit);
 
     /**
      * UPDATE atomique : n'annule que si le statut est encore EN_ATTENTE au moment de l'UPDATE.

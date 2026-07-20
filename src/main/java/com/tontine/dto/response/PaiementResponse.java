@@ -19,9 +19,8 @@ public class PaiementResponse {
     /** Message retourné par l'opérateur */
     private String messageOperateur;
     /**
-     * Instructions affichées à l'utilisateur selon l'opérateur :
-     * MTN  → "Confirmez sur votre téléphone MTN"
-     * Orange → "Composez #150*50# pour confirmer"
+     * Instructions affichées à l'utilisateur : une fenêtre de confirmation
+     * s'affiche sur le téléphone, l'utilisateur entre son code secret Mobile Money.
      */
     private String instructions;
     private LocalDateTime createdAt;

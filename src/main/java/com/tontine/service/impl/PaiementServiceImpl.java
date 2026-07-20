@@ -238,8 +238,7 @@ public class PaiementServiceImpl implements PaiementService {
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
                             .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
-                                    + "entrez votre code secret MoMo pour valider. "
-                                    + "Si rien ne s'affiche, composez *126# pour valider le paiement en attente.")
+                                    + "entrez votre code secret MoMo pour valider le paiement.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
                 } else if ("INVALID_MSISDN".equalsIgnoreCase(mtnStatus)) {
@@ -271,8 +270,8 @@ public class PaiementServiceImpl implements PaiementService {
                     .numeroPaieur(request.getNumeroPaiement())
                     .urlPaiement(widgetUrl)
                     .instructions("La demande n'a pas pu être envoyée directement sur votre téléphone. "
-                            + "Ouvrez le lien de paiement pour finaliser, ou composez *126# "
-                            + "pour valider le paiement en attente.")
+                            + "Ouvrez le lien de paiement pour finaliser : une fenêtre s'affichera, "
+                            + "entrez votre code secret MoMo pour valider.")
                     .createdAt(paiement.getCreatedAt())
                     .build();
         } else {
@@ -306,8 +305,7 @@ public class PaiementServiceImpl implements PaiementService {
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
                             .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
-                                    + "entrez votre code secret Orange Money pour valider. "
-                                    + "Si rien ne s'affiche, composez #150*50# pour valider le paiement en attente.")
+                                    + "entrez votre code secret Orange Money pour valider le paiement.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
                 } else if ("INVALID_MSISDN".equalsIgnoreCase(orangeStatus)) {
@@ -340,8 +338,8 @@ public class PaiementServiceImpl implements PaiementService {
                     .numeroPaieur(request.getNumeroPaiement())
                     .urlPaiement(widgetUrl)
                     .instructions("La demande n'a pas pu être envoyée directement sur votre téléphone. "
-                            + "Ouvrez le lien de paiement pour finaliser, ou composez #150*50# "
-                            + "pour valider le paiement en attente.")
+                            + "Ouvrez le lien de paiement pour finaliser : une fenêtre s'affichera, "
+                            + "entrez votre code secret Orange Money pour valider.")
                     .createdAt(paiement.getCreatedAt())
                     .build();
         }

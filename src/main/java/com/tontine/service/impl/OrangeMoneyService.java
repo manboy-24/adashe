@@ -111,7 +111,7 @@ public class OrangeMoneyService {
                     "payToken", payToken,
                     "notifToken", notifToken,
                     "referenceOperateur", payToken,
-                    "message", "Confirmez le paiement Orange Money sur votre téléphone (#150*50#)"
+                    "message", "Une fenêtre s'affiche sur votre téléphone — entrez votre code secret Orange Money pour valider."
                 );
             } else {
                 return Map.of("success", false, "message", "Échec Orange Money: " + response.getStatusCode());

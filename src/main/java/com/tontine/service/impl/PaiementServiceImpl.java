@@ -90,9 +90,12 @@ public class PaiementServiceImpl implements PaiementService {
         Tontine tontine = tontineRepository.findById(request.getTontineId())
                 .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
 
-        // Vérifier que l'utilisateur est bien le membre concerné
-        if (!membre.getUtilisateur().getId().equals(userId)) {
-            throw new ForbiddenException("Vous ne pouvez payer que pour votre propre compte");
+        // Le membre lui-même, ou le créateur de la tontine qui paie pour un membre
+        // en débitant son propre compte Mobile Money
+        boolean paiePourSoi = membre.getUtilisateur().getId().equals(userId);
+        boolean estCreateur = tontine.getCreateur().getId().equals(userId);
+        if (!paiePourSoi && !estCreateur) {
+            throw new ForbiddenException("Seul le membre concerné ou le créateur de la tontine peut payer cette cotisation");
         }
 
         // Valider l'opérateur pour le Cameroun
@@ -184,6 +187,9 @@ public class PaiementServiceImpl implements PaiementService {
                 .referenceTransaction(reference)
                 .numeroPaieur(request.getNumeroPaiement())
                 .numeroCycle(targetCycle)
+                .payePourCompte(!paiePourSoi)
+                .adminPayeur(paiePourSoi ? null
+                        : utilisateurRepository.findById(userId).orElse(null))
                 .build();
         paiement = paiementRepository.save(paiement);
 

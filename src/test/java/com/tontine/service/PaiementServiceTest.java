@@ -127,7 +127,9 @@ class PaiementServiceTest {
     }
 
     @Test
-    void initierPaiement_pour_autre_membre_leve_exception() {
+    void initierPaiement_ni_membre_ni_createur_leve_exception() {
+        // Le créateur (1L) est autorisé à payer pour un membre ; un tiers non
+        // créateur (55L) doit toujours être refusé
         Utilisateur autreUser = Utilisateur.builder().id(99L).build();
         MembreTontine autreMembre = MembreTontine.builder()
                 .id(100L).utilisateur(autreUser).tontine(tontine).build();
@@ -135,8 +137,9 @@ class PaiementServiceTest {
         when(membreRepository.findById(100L)).thenReturn(Optional.of(autreMembre));
         when(tontineRepository.findById(10L)).thenReturn(Optional.of(tontine));
 
-        assertThatThrownBy(() -> paiementService.initierPaiement(buildRequest(PaiementMode.MTN_MOBILE_MONEY), 1L))
-                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> paiementService.initierPaiement(buildRequest(PaiementMode.MTN_MOBILE_MONEY), 55L))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("créateur");
     }
 
     @Test

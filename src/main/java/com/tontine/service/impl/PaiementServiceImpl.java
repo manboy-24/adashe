@@ -97,6 +97,11 @@ public class PaiementServiceImpl implements PaiementService {
             throw new BadRequestException("Ce membre n'appartient pas à cette tontine");
         }
 
+        // Vérifier que le membre est actif dans la tontine (parité avec initierPaiementEspeces)
+        if (!Boolean.TRUE.equals(membre.getActif()) || membre.getStatutMembre() != MembreStatut.ACTIF) {
+            throw new BadRequestException("Ce membre n'est pas actif dans la tontine");
+        }
+
         // Le membre lui-même, ou le créateur de la tontine qui paie pour un membre
         // en débitant son propre compte Mobile Money
         boolean paiePourSoi = membre.getUtilisateur().getId().equals(userId);

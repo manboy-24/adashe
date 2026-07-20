@@ -10,6 +10,9 @@ firebase-service-account.json
 *.jks
 *.keystore
 
+# ── Claude Code (local settings) ───────────────────────────────────────────────
+.claude/
+
 # ── IDE ────────────────────────────────────────────────────────────────────────
 .idea/
 *.iml

@@ -90,6 +90,13 @@ public class PaiementServiceImpl implements PaiementService {
         Tontine tontine = tontineRepository.findById(request.getTontineId())
                 .orElseThrow(() -> new ResourceNotFoundException("Tontine non trouvée"));
 
+        // Le membre doit appartenir à la tontine ciblée — sinon un créateur pourrait
+        // enregistrer une cotisation contre le membre d'une AUTRE tontine (IDOR), à un
+        // montant issu de sa propre tontine. Même garde que initierPaiementEspeces.
+        if (!membre.getTontine().getId().equals(tontine.getId())) {
+            throw new BadRequestException("Ce membre n'appartient pas à cette tontine");
+        }
+
         // Le membre lui-même, ou le créateur de la tontine qui paie pour un membre
         // en débitant son propre compte Mobile Money
         boolean paiePourSoi = membre.getUtilisateur().getId().equals(userId);

@@ -197,7 +197,31 @@ public class DonServiceImpl implements DonService {
                 .statut(don.getStatut())
                 .montant(don.getMontant())
                 .nomComplet((u.getPrenom() + " " + u.getNom()).trim())
+                .message(don.getStatut() == PaiementStatus.ANNULE ? don.getMessageOperateur() : null)
                 .build();
+    }
+
+    // Traduit un code/message d'échec Monetbil en message clair pour le donateur.
+    private String messageErreurLisible(String raw) {
+        if (raw == null || raw.isBlank()) return "Le paiement n'a pas abouti. Réessayez.";
+        String r = raw.toUpperCase();
+        if (r.contains("LOW_BALANCE") && r.contains("LIMIT"))
+            return "Paiement refusé : solde insuffisant, limite atteinte ou compte non autorisé.";
+        if (r.contains("LOW_BALANCE") || r.contains("INSUFFICIENT") || r.contains("SOLDE"))
+            return "Solde insuffisant sur le compte Mobile Money.";
+        if (r.contains("LIMIT"))
+            return "Limite de transaction Mobile Money atteinte.";
+        if (r.contains("NOT_ALLOWED"))
+            return "Transaction non autorisée sur ce compte Mobile Money.";
+        if (r.contains("CANCEL"))
+            return "Paiement annulé.";
+        if (r.contains("TIMEOUT") || r.contains("EXPIRED"))
+            return "Délai de confirmation dépassé. Réessayez.";
+        if (r.contains("INVALID") || r.contains("MSISDN"))
+            return "Numéro Mobile Money invalide.";
+        if (r.contains("FAIL"))
+            return "Le paiement a échoué. Réessayez.";
+        return "Le paiement n'a pas abouti : " + raw;
     }
 
     // ── Callback Monetbil ─────────────────────────────────────────────────────
@@ -254,7 +278,9 @@ public class DonServiceImpl implements DonService {
             }
             case "FAILED", "CANCELLED" -> {
                 don.setStatut(PaiementStatus.ANNULE);
-                don.setMessageOperateur(params.getOrDefault("message", "Paiement annulé"));
+                String raw = params.getOrDefault("message", status);
+                don.setMessageOperateur(messageErreurLisible(raw));
+                log.info("Don {} échoué — motif brut : {}", don.getReferenceTransaction(), raw);
             }
             default -> {
                 log.info("Statut don non terminal : {}", status);

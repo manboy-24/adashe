@@ -13,4 +13,5 @@ public class DonStatutResponse {
     private PaiementStatus statut;      // EN_ATTENTE | PAYE | ANNULE
     private BigDecimal     montant;
     private String         nomComplet;  // nom du donateur, pour l'écran de remerciement
+    private String         message;     // motif si échec (solde insuffisant, limite…)
 }

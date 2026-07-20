@@ -43,7 +43,7 @@ public class Don {
     @Column(unique = true)
     private String referenceTransaction;  // DON-XXXX
 
-    private String numeroPaieur;          // Numéro de la société (côté backend uniquement)
+    private String numeroPaieur;          // Numéro Mobile Money du donateur débité
 
     @Column(length = 500)
     private String messageOperateur;

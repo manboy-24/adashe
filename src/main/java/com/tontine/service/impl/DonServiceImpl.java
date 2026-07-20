@@ -25,8 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -263,6 +261,9 @@ public class DonServiceImpl implements DonService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // Algorithme Monetbil officiel : MD5(serviceSecret + valeurs triées par clé, sans "sign")
+    // Identique au webhook de paiement (verifierSignatureMonetbil). L'ancienne version
+    // utilisait HmacSHA512 → signature TOUJOURS rejetée → dons jamais confirmés.
     private boolean verifierSignature(Map<String, String> payload, String sign) {
         if (sign == null || sign.isBlank()) return false;
         try {
@@ -270,15 +271,14 @@ public class DonServiceImpl implements DonService {
             payload.entrySet().stream()
                     .filter(e -> !"sign".equals(e.getKey()))
                     .sorted(Map.Entry.comparingByKey())
-                    .forEach(e -> sb.append(e.getValue()));
+                    .forEach(e -> sb.append(e.getValue() != null ? e.getValue() : ""));
 
-            Mac mac = Mac.getInstance("HmacSHA512");
-            mac.init(new SecretKeySpec(
-                    monetbilServiceSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA512"));
-            byte[] hash = mac.doFinal(sb.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] hash = MessageDigest.getInstance("MD5")
+                    .digest(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format("%02x", b));
+
             return MessageDigest.isEqual(
                     hex.toString().toLowerCase().getBytes(StandardCharsets.UTF_8),
                     sign.toLowerCase().getBytes(StandardCharsets.UTF_8));

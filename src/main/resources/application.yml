@@ -154,6 +154,6 @@ management:
 
 info:
   app:
-    name: AdasheCash API
+    name: Adashe API
     version: 1.0.0
     description: Gestion de tontines — Cameroun

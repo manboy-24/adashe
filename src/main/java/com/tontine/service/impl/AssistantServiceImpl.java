@@ -72,7 +72,7 @@ public class AssistantServiceImpl implements AssistantService {
         try {
             String reponse = chatClient.prompt()
                     .system("""
-                            Tu es l'assistant d'aide d'AdasheCash, application de gestion de
+                            Tu es l'assistant d'aide d'Adashe, application de gestion de
                             tontines au Cameroun. Réponds en français simple et chaleureux,
                             4 phrases maximum (les utilisateurs ne sont pas tous à l'aise
                             avec l'écrit). Base-toi UNIQUEMENT sur la documentation ci-dessous

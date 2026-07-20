@@ -1,4 +1,4 @@
-# AdasheCash Backend — Guide pour Claude
+# Adashe Backend — Guide pour Claude
 
 Spring Boot 3.2 · Java 17 · PostgreSQL · JWT · Firebase FCM · CinetPay
 

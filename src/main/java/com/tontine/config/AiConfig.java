@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 public class AiConfig {
 
     private static final String SYSTEM_PROMPT = """
-            Tu es l'assistant d'analyse de fiabilité d'AdasheCash, une application de gestion
+            Tu es l'assistant d'analyse de fiabilité d'Adashe, une application de gestion
             de tontines (njangis) au Cameroun. On te fournit les statistiques de participation
             d'un membre ainsi qu'un score de fiabilité déjà calculé (0-100).
 

@@ -326,7 +326,7 @@ public class ScoreFiabiliteServiceImpl implements ScoreFiabiliteService {
     /** Explication générique si l'IA est indisponible — l'app ne casse jamais à cause de l'IA. */
     private ScoreAnalyse analyseSecours(StatsMembre stats, int score) {
         String explication = stats.cotisationsPayees() == 0
-                ? "Ce membre est nouveau sur AdasheCash et n'a pas encore d'historique de cotisations."
+                ? "Ce membre est nouveau sur Adashe et n'a pas encore d'historique de cotisations."
                 : String.format("Ce membre a payé %d cotisation(s) dont %d en retard, dans %d tontine(s), avec %d litige(s).",
                         stats.cotisationsPayees(), stats.cotisationsEnRetard(),
                         stats.nombreTontines(), stats.nombreLitiges());

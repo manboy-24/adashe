@@ -43,7 +43,7 @@ public class BriefingHebdoScheduler {
 
     private static final String SYSTEM_BRIEFING = """
             Tu rédiges le briefing hebdomadaire de l'administrateur d'une tontine
-            camerounaise sur AdasheCash. À partir des chiffres fournis, écris un
+            camerounaise sur Adashe. À partir des chiffres fournis, écris un
             résumé en français simple : 3 phrases maximum, puis si nécessaire UNE
             action concrète à faire cette semaine (commençant par "À faire : ").
             Ton chaleureux et direct. Montants en FCFA. N'invente aucun chiffre.

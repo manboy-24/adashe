@@ -225,7 +225,9 @@ public class PaiementServiceImpl implements PaiementService {
                 if ("REQUEST_ACCEPTED".equals(mtnStatus)) {
                     paiement.setGatewayTransactionId(paymentId);
                     paiementRepository.save(paiement);
-                    log.info("Paiement MTN push initié: ref={} net={} total={} frais={}", reference, montantNet, montantFacture, fraisGateway);
+                    log.info("Paiement MTN initié: ref={} net={} total={} flow={} ussd={}", reference, montantNet, montantFacture,
+                            mtnResp.path("flow").asText(""), mtnResp.path("channel_ussd").asText(""));
+                    String ussd = mtnResp.path("channel_ussd").asText("");
                     return PaiementResponse.builder()
                             .id(paiement.getId())
                             .referenceTransaction(reference)
@@ -237,8 +239,10 @@ public class PaiementServiceImpl implements PaiementService {
                             .statut(PaiementStatus.EN_ATTENTE)
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
-                            .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
-                                    + "entrez votre code secret MoMo pour valider le paiement.")
+                            .codeUssd(ussd.isBlank() ? null : ussd)
+                            .instructions(ussd.isBlank()
+                                    ? "Une fenêtre de confirmation devrait s'afficher sur le téléphone à débiter — entrez votre code secret MoMo pour valider le paiement."
+                                    : "Une fenêtre de confirmation devrait s'afficher sur le téléphone à débiter — entrez votre code secret MoMo pour valider. Si rien ne s'affiche, composez " + ussd + " pour valider.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
                 } else if ("INVALID_MSISDN".equalsIgnoreCase(mtnStatus)) {
@@ -292,7 +296,9 @@ public class PaiementServiceImpl implements PaiementService {
                 if ("REQUEST_ACCEPTED".equals(orangeStatus)) {
                     paiement.setGatewayTransactionId(paymentId);
                     paiementRepository.save(paiement);
-                    log.info("Paiement Orange push initié: ref={} net={} total={} frais={}", reference, montantNet, montantFacture, fraisGateway);
+                    log.info("Paiement Orange initié: ref={} net={} total={} flow={} ussd={}", reference, montantNet, montantFacture,
+                            orangeResp.path("flow").asText(""), orangeResp.path("channel_ussd").asText(""));
+                    String ussd = orangeResp.path("channel_ussd").asText("");
                     return PaiementResponse.builder()
                             .id(paiement.getId())
                             .referenceTransaction(reference)
@@ -304,8 +310,10 @@ public class PaiementServiceImpl implements PaiementService {
                             .statut(PaiementStatus.EN_ATTENTE)
                             .numeroPaieur(request.getNumeroPaiement())
                             .messageOperateur("Demande envoyée.")
-                            .instructions("Une fenêtre de confirmation s'affiche sur le téléphone à débiter — "
-                                    + "entrez votre code secret Orange Money pour valider le paiement.")
+                            .codeUssd(ussd.isBlank() ? null : ussd)
+                            .instructions(ussd.isBlank()
+                                    ? "Une fenêtre de confirmation devrait s'afficher sur le téléphone à débiter — entrez votre code secret Orange Money pour valider le paiement."
+                                    : "Une fenêtre de confirmation devrait s'afficher sur le téléphone à débiter — entrez votre code secret Orange Money pour valider. Si rien ne s'affiche, composez " + ussd + " pour valider.")
                             .createdAt(paiement.getCreatedAt())
                             .build();
                 } else if ("INVALID_MSISDN".equalsIgnoreCase(orangeStatus)) {

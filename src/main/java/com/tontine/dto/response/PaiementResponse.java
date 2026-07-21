@@ -23,6 +23,8 @@ public class PaiementResponse {
      * s'affiche sur le téléphone, l'utilisateur entre son code secret Mobile Money.
      */
     private String instructions;
+    /** Code à composer (*126# MTN, #150*50# Orange) si le compte est en flow USSD. */
+    private String codeUssd;
     private LocalDateTime createdAt;
     /** true si l'admin a payé en MoMo pour le compte d'un membre (cash) */
     private Boolean payePourCompte;
